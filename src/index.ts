@@ -6,7 +6,20 @@ import fs from 'fs';
 import http from 'http';
 
 const execFilePromise = util.promisify(execFile);
-const YTDLP_PATH = "C:\\Users\\opgss\\AppData\\Local\\Microsoft\\WinGet\\Packages\\yt-dlp.yt-dlp_Microsoft.Winget.Source_8wekyb3d8bbwe\\yt-dlp.exe";
+// --- Path Configuration for Distribution ---
+const isDev = !app.isPackaged;
+// In dev: project root, In production: resources folder
+const baseDir = isDev ? app.getAppPath() : process.resourcesPath;
+const binPath = path.join(baseDir, 'bin');
+
+// Add bin directory to system PATH dynamically for yt-dlp to find ffmpeg
+if (fs.existsSync(binPath)) {
+  process.env.PATH = `${binPath}${path.delimiter}${process.env.PATH}`;
+}
+
+// Always use relative path to bin/yt-dlp.exe
+const YTDLP_PATH = path.join(binPath, 'yt-dlp.exe');
+
 const CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
 const PROTOCOL = 'video-downloader';
 

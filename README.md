@@ -24,6 +24,11 @@
 2.  왼쪽 하단의 **[개발자 모드]**를 활성화합니다.
 3.  **[압축 해제된 확장 로드]** 버튼을 누르고 프로젝트의 `edge-extension` 폴더를 선택하거나, 배포된 폴더를 선택합니다.
 
+#### 💡 Edge 확장 권한 자동 등록 (Edge 재시작 시 초기화 방지)
+Edge 브라우저 정책에 따라 확장이 매번 비활성화되는 경우, 다음 도구를 사용하여 확장 ID를 허용 목록에 등록하세요.
+-   **PowerShell**: `setup_edge_extension.ps1` 파일을 **관리자 권한**으로 실행합니다.
+-   **Registry**: `setup_edge_extension.reg` 파일을 실행하여 레지스트리에 병합합니다. (관리자 권한 필요)
+
 ### 3. 동영상 다운로드
 -   **일반 사이트**: 페이지 이동 후 확장 아이콘을 누르고 **[Send Current Page URL]** 클릭.
 -   **YouTube/Twitter**: 영상을 재생한 상태에서 **[Send Current Page URL]** 클릭.
