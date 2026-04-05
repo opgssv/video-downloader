@@ -33,11 +33,14 @@ function App() {
   const [useCookies, setUseCookies] = useState(true);
   const [referer, setReferer] = useState<string | undefined>(undefined);
   
-  // Use a ref to keep track of the extension-provided title to avoid stale closures
+  // Use refs to keep track of the absolute latest URL and title to avoid stale closures in handleDownload
   const extensionTitleRef = useRef<string>('');
+  const currentUrlRef = useRef<string>('');
 
   const handleAnalyze = useCallback(async (targetUrl?: string, overrideReferer?: string, manualTitle?: string) => {
     const finalUrl = targetUrl || url;
+    if (targetUrl) currentUrlRef.current = targetUrl; // Update ref if incoming from extension
+    
     const finalReferer = overrideReferer || referer;
     const initialTitle = manualTitle || extensionTitleRef.current;
     
@@ -59,13 +62,17 @@ function App() {
       const ytDlpTitle = result.data.title;
       const isGeneric = !ytDlpTitle || ['playlist', 'video', 'index', 'downloaded video'].includes(ytDlpTitle.toLowerCase());
       
-      // Update title only if yt-dlp has a specific name
+      // Update title and ref only if yt-dlp has a specific name
       if (!isGeneric) {
         setTitle(ytDlpTitle);
+        extensionTitleRef.current = ytDlpTitle;
       } else if (initialTitle) {
         setTitle(initialTitle);
+        extensionTitleRef.current = initialTitle;
       } else if (!ytDlpTitle && !initialTitle) {
-        setTitle('Downloaded Video');
+        const fallback = 'Downloaded Video';
+        setTitle(fallback);
+        extensionTitleRef.current = fallback;
       }
 
       let filteredFormats = result.data.formats.filter(
@@ -110,6 +117,7 @@ function App() {
 
     window.electronAPI.onFromExtension((incomingUrl: string, originalUrl?: string, incomingTitle?: string) => {
       setUrl(incomingUrl);
+      currentUrlRef.current = incomingUrl; // Update ref immediately
       if (originalUrl) setReferer(originalUrl);
       if (incomingTitle) {
         extensionTitleRef.current = incomingTitle;
@@ -122,6 +130,7 @@ function App() {
   const handleDownload = async (format: VideoFormat) => {
     const tempDownloadId = `${format.format_id}-${Date.now()}`;
     const currentTitle = title || extensionTitleRef.current || 'Downloaded Video';
+    const targetUrl = currentUrlRef.current || url; // Use ref primarily
     
     const newItem: DownloadItem = {
       downloadId: tempDownloadId,
@@ -136,8 +145,8 @@ function App() {
     
     setDownloads((prev) => [newItem, ...prev]);
 
-    // CRITICAL: Pass the absolute latest title to index.ts
-    const result = await window.electronAPI.downloadVideo(tempDownloadId, format.format_id, url, useCookies, referer, currentTitle);
+    // CRITICAL: Pass the absolute latest title AND URL to index.ts
+    const result = await window.electronAPI.downloadVideo(tempDownloadId, format.format_id, targetUrl, useCookies, referer, currentTitle);
 
     if (result.success && result.downloadId) {
       setDownloads((prev) => 

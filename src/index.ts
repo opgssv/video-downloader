@@ -400,11 +400,27 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
     targetUrl = targetUrl.slice(0, -1);
   }
 
-  // Determine output template
+  // Determine output template and handle potential name collisions
   let outputTemplate = path.join(currentConfig.downloadPath, '%(title)s.%(ext)s');
   if (customTitle) {
     const safeTitle = sanitizeFilename(customTitle);
-    outputTemplate = path.join(currentConfig.downloadPath, `${safeTitle}.%(ext)s`);
+    const extension = targetUrl.toLowerCase().includes('.m3u8') ? 'mp4' : 'mp4'; // Default to mp4 for custom titles if unknown, yt-dlp will handle actual ext
+    
+    // Check for existing files and add suffix if necessary to prevent overwrites
+    let finalTitle = safeTitle;
+    let counter = 1;
+    
+    // Note: We don't know the exact extension yet if it's dynamic, 
+    // but we can check for common ones or just the base name.
+    // For simplicity and effectiveness, we'll check common video extensions.
+    const commonExts = ['mp4', 'mkv', 'webm', 'ts'];
+    
+    while (commonExts.some(ext => fs.existsSync(path.join(currentConfig.downloadPath, `${finalTitle}.${ext}`)))) {
+      finalTitle = `${safeTitle} (${counter})`;
+      counter++;
+    }
+    
+    outputTemplate = path.join(currentConfig.downloadPath, `${finalTitle}.%(ext)s`);
   }
 
   let tempCookiePath: string | null = null;
