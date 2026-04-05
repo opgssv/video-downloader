@@ -377,7 +377,7 @@ function sanitizeFilename(filename: string) {
   return filename.replace(/[<>:"/\\|?*]/g, '_').trim();
 }
 
-async function handleDownloadVideo(event: IpcMainInvokeEvent, formatId: string, url: string, useCookies: boolean, overrideReferer?: string, customTitle?: string) {
+async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string, formatId: string, url: string, useCookies: boolean, overrideReferer?: string, customTitle?: string) {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (!window) return { success: false, error: 'No main window found.' };
 
@@ -394,7 +394,6 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, formatId: string, 
     outputTemplate = path.join(currentConfig.downloadPath, `${safeTitle}.%(ext)s`);
   }
 
-  const downloadId = `${formatId}-${Date.now()}`;
   let tempCookiePath: string | null = null;
 
   try {
@@ -458,7 +457,7 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, formatId: string, 
           const unit = totalSize.match(/[a-zA-Z]+/)?.[0] || 'MiB';
           const calcDownloaded = (totalVal * percentage / 100).toFixed(2);
           downloadedSize = `${calcDownloaded}${unit}`;
-        } catch (e) {}
+        } catch (e) { /* ignore calculation error */ }
 
         window.webContents.send('download-progress', { 
           downloadId, formatId, percentage, totalSize, downloadedSize, speed, eta 
@@ -512,8 +511,8 @@ async function handleCancelDownload(event: IpcMainInvokeEvent, downloadId: strin
 
 // Global Handlers
 ipcMain.handle('analyze-url', handleAnalyzeUrl);
-ipcMain.handle('download-video', (event, formatId, url, useCookies, referer, customTitle) => 
-  handleDownloadVideo(event, formatId, url, useCookies, referer, customTitle)
+ipcMain.handle('download-video', (event, downloadId, formatId, url, useCookies, referer, customTitle) => 
+  handleDownloadVideo(event, downloadId, formatId, url, useCookies, referer, customTitle)
 );
 ipcMain.handle('cancel-download', handleCancelDownload);
 ipcMain.handle('get-download-path', handleGetDownloadPath);

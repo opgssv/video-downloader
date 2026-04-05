@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
   analyzeUrl: (url: string, useCookies: boolean, referer?: string) => ipcRenderer.invoke('analyze-url', url, useCookies, referer),
-  downloadVideo: (formatId: string, url: string, useCookies: boolean, referer?: string, customTitle?: string) => ipcRenderer.invoke('download-video', formatId, url, useCookies, referer, customTitle),
+  downloadVideo: (downloadId: string, formatId: string, url: string, useCookies: boolean, referer?: string, customTitle?: string) => ipcRenderer.invoke('download-video', downloadId, formatId, url, useCookies, referer, customTitle),
   cancelDownload: (downloadId: string) => ipcRenderer.invoke('cancel-download', downloadId),
   getDownloadPath: () => ipcRenderer.invoke('get-download-path'),
   selectDownloadPath: () => ipcRenderer.invoke('select-download-path'),

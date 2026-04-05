@@ -137,7 +137,7 @@ function App() {
     setDownloads((prev) => [newItem, ...prev]);
 
     // CRITICAL: Pass the absolute latest title to index.ts
-    const result = await window.electronAPI.downloadVideo(format.format_id, url, useCookies, referer, currentTitle);
+    const result = await window.electronAPI.downloadVideo(tempDownloadId, format.format_id, url, useCookies, referer, currentTitle);
 
     if (result.success && result.downloadId) {
       setDownloads((prev) => 

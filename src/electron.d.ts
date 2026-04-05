@@ -1,6 +1,6 @@
 export interface IElectronAPI {
   analyzeUrl: (url: string, useCookies: boolean, referer?: string) => Promise<any>;
-  downloadVideo: (formatId: string, url: string, useCookies: boolean, referer?: string, customTitle?: string) => Promise<any>;
+  downloadVideo: (downloadId: string, formatId: string, url: string, useCookies: boolean, referer?: string, customTitle?: string) => Promise<any>;
   cancelDownload: (downloadId: string) => Promise<any>;
   getDownloadPath: () => Promise<string>;
   selectDownloadPath: () => Promise<string | null>;
