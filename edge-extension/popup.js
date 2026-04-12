@@ -18,7 +18,11 @@ async function sendToApp(url, title = 'External Link') {
     if (response.ok) {
       statusText.innerText = 'Success! App is analyzing.';
       statusText.style.color = '#2b7d1e';
-      setTimeout(() => window.close(), 1500);
+      // Keep popup open so user can see it's working and send other links
+      setTimeout(() => {
+        statusText.innerText = 'Ready';
+        statusText.style.color = '#666';
+      }, 3000);
     } else {
       throw new Error('App rejected request');
     }

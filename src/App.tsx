@@ -30,12 +30,25 @@ function App() {
   const [title, setTitle] = useState('');
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const [downloadPath, setDownloadPath] = useState('');
-  const [useCookies, setUseCookies] = useState(true);
   const [referer, setReferer] = useState<string | undefined>(undefined);
+  const [autoRemoveCompleted, setAutoRemoveCompleted] = useState(false);
+  const [autoQuitOnFinish, setAutoQuitOnFinish] = useState(false);
   
   // Use refs to keep track of the absolute latest URL and title to avoid stale closures in handleDownload
   const extensionTitleRef = useRef<string>('');
   const currentUrlRef = useRef<string>('');
+  
+  // Keep track of options in refs so the progress listener can access their latest values
+  const autoRemoveRef = useRef(autoRemoveCompleted);
+  const autoQuitRef = useRef(autoQuitOnFinish);
+
+  useEffect(() => {
+    autoRemoveRef.current = autoRemoveCompleted;
+  }, [autoRemoveCompleted]);
+
+  useEffect(() => {
+    autoQuitRef.current = autoQuitOnFinish;
+  }, [autoQuitOnFinish]);
 
   const handleAnalyze = useCallback(async (targetUrl?: string, overrideReferer?: string, manualTitle?: string) => {
     const finalUrl = targetUrl || url;
@@ -55,7 +68,7 @@ function App() {
     // Set initial title from extension if available
     if (initialTitle) setTitle(initialTitle);
 
-    const result = await window.electronAPI.analyzeUrl(finalUrl, useCookies, finalReferer);
+    const result = await window.electronAPI.analyzeUrl(finalUrl, finalReferer);
 
     setIsLoading(false);
     if (result.success) {
@@ -91,15 +104,21 @@ function App() {
     } else {
       setError(result.error || 'An unknown error occurred.');
     }
-  }, [url, useCookies, referer]); // Removed title from dependencies to avoid recreation loop
+  }, [url, referer]); // Removed useCookies from dependencies
 
   useEffect(() => {
     window.electronAPI.getDownloadPath().then(path => setDownloadPath(path));
 
     window.electronAPI.onDownloadProgress((progress) => {
-      setDownloads((prev) => 
-        prev.map((item) => {
-          if (item.downloadId === progress.downloadId) {
+      setDownloads((prev) => {
+        let isAnyStillDownloading = false;
+        const next = prev.map((item) => {
+          const isTarget = item.downloadId === progress.downloadId;
+          const newStatus = (isTarget && progress.status === 'completed') ? 'completed' : item.status;
+          
+          if (newStatus === 'downloading') isAnyStillDownloading = true;
+
+          if (isTarget) {
             return {
               ...item,
               percentage: progress.percentage,
@@ -107,12 +126,29 @@ function App() {
               eta: progress.eta,
               totalSize: progress.totalSize || item.totalSize,
               downloadedSize: progress.downloadedSize || item.downloadedSize,
-              status: progress.status === 'completed' ? 'completed' : item.status,
+              status: newStatus,
             };
           }
           return item;
-        })
-      );
+        });
+
+        // 1. Auto-remove logic
+        let finalItems = next;
+        if (autoRemoveRef.current && progress.status === 'completed') {
+          finalItems = next.filter(item => item.downloadId !== progress.downloadId);
+          // Recalculate if anything is still downloading after removal
+          isAnyStillDownloading = finalItems.some(i => i.status === 'downloading');
+        }
+
+        // 2. Auto-quit logic
+        if (autoQuitRef.current && !isAnyStillDownloading && progress.status === 'completed') {
+          setTimeout(() => {
+            window.electronAPI.quitApp();
+          }, 2000);
+        }
+
+        return finalItems;
+      });
     });
 
     window.electronAPI.onFromExtension((incomingUrl: string, originalUrl?: string, incomingTitle?: string) => {
@@ -146,7 +182,7 @@ function App() {
     setDownloads((prev) => [newItem, ...prev]);
 
     // CRITICAL: Pass the absolute latest title AND URL to index.ts
-    const result = await window.electronAPI.downloadVideo(tempDownloadId, format.format_id, targetUrl, useCookies, referer, currentTitle);
+    const result = await window.electronAPI.downloadVideo(tempDownloadId, format.format_id, targetUrl, referer, currentTitle);
 
     if (result.success && result.downloadId) {
       setDownloads((prev) => 
@@ -218,16 +254,23 @@ function App() {
           <button className="change-path-btn" onClick={handleSelectPath}>Change</button>
         </div>
 
-        <div className="cookie-settings">
+        <div className="automation-settings">
           <label className="checkbox-label">
             <input 
               type="checkbox" 
-              checked={useCookies} 
-              onChange={(e) => setUseCookies(e.target.checked)} 
+              checked={autoRemoveCompleted} 
+              onChange={(e) => setAutoRemoveCompleted(e.target.checked)} 
             />
-            Use Edge Cookies
+            Auto-remove completed items
           </label>
-          <span className="help-text">(Private mode not supported)</span>
+          <label className="checkbox-label">
+            <input 
+              type="checkbox" 
+              checked={autoQuitOnFinish} 
+              onChange={(e) => setAutoQuitOnFinish(e.target.checked)} 
+            />
+            Auto-quit when all downloads finish
+          </label>
         </div>
       </div>
 
@@ -248,9 +291,18 @@ function App() {
       {error && <div className="error-box">{error}</div>}
 
       {/* Main Analysis Results */}
-      {title && (
+      {title !== '' && (
         <div className="analysis-results">
-          <h2 className="video-title">{title}</h2>
+          <div className="title-edit-container">
+            <label>File Name:</label>
+            <input 
+              type="text" 
+              className="title-edit-input" 
+              value={title} 
+              onChange={(e) => setTitle(e.target.value)} 
+              placeholder="Enter file name"
+            />
+          </div>
           <div className="results">
             <table>
               <thead>
@@ -279,7 +331,6 @@ function App() {
           </div>
         </div>
       )}
-
       {/* Persistent Download Queue */}
       {downloads.length > 0 && (
         <div className="download-queue">

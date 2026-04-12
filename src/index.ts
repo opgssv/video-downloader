@@ -1,5 +1,5 @@
 import { app, BrowserWindow, ipcMain, IpcMainInvokeEvent, dialog, powerSaveBlocker } from 'electron';
-import { execFile, spawn, execSync, spawn as spawnChild } from 'child_process';
+import { execFile, spawn, exec, spawn as spawnChild } from 'child_process';
 import util from 'util';
 import path from 'path';
 import fs from 'fs';
@@ -46,14 +46,20 @@ declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
 
 function loadConfig() {
+  const defaults = { 
+    downloadPath: app.getPath('downloads'),
+    width: 1200,
+    height: 900
+  };
   try {
     if (fs.existsSync(CONFIG_PATH)) {
-      return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+      const saved = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf-8'));
+      return { ...defaults, ...saved };
     }
   } catch (e) {
     console.error('Failed to load config', e);
   }
-  return { downloadPath: app.getPath('downloads') };
+  return defaults;
 }
 
 function saveConfig(config: any) {
@@ -168,8 +174,8 @@ if (!gotTheLock) {
 
 const createWindow = (): void => {
   mainWindow = new BrowserWindow({
-    height: 600,
-    width: 800,
+    height: currentConfig.height,
+    width: currentConfig.width,
     show: false, // Don't show until ready-to-show to avoid white flicker
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
@@ -177,6 +183,16 @@ const createWindow = (): void => {
       nodeIntegration: false,
       backgroundThrottling: false,
     },
+  });
+
+  // Save window size when resized
+  mainWindow.on('resize', () => {
+    if (mainWindow) {
+      const bounds = mainWindow.getBounds();
+      currentConfig.width = bounds.width;
+      currentConfig.height = bounds.height;
+      saveConfig(currentConfig);
+    }
   });
 
   mainWindow.loadURL(MAIN_WINDOW_WEBPACK_ENTRY).catch(err => {
@@ -237,36 +253,6 @@ const startLocalServer = () => {
     console.log('Local API server listening on http://127.0.0.1:8888');
   });
 };
-
-// --- Cookie Logic ---
-function getEdgeCookiePath() {
-  const baseEdgePath = path.join(process.env.LOCALAPPDATA || '', 'Microsoft/Edge/User Data');
-  const profiles = ['Default', 'Profile 1', 'Profile 2', 'Profile 3'];
-  const cookieSubPaths = ['Network/Cookies', 'Cookies'];
-
-  for (const profile of profiles) {
-    for (const subPath of cookieSubPaths) {
-      const checkPath = path.join(baseEdgePath, profile, subPath);
-      if (fs.existsSync(checkPath)) return checkPath;
-    }
-  }
-  return null;
-}
-
-function createTempCookieFile(prefix: string): string | null {
-  const edgeCookiePath = getEdgeCookiePath();
-  if (!edgeCookiePath) return null;
-
-  const tempPath = path.join(app.getPath('temp'), `${prefix}_cookies_${Date.now()}.db`);
-  try {
-    execSync(`cmd /c copy /y "${edgeCookiePath}" "${tempPath}"`, { stdio: 'ignore' });
-    if (fs.existsSync(tempPath)) return tempPath;
-  } catch (e) {
-    console.error('Cookie copy failed', e);
-  }
-  return null;
-}
-
 // --- IPC Handlers ---
 async function handleGetDownloadPath() {
   return currentConfig.downloadPath;
@@ -285,9 +271,7 @@ async function handleSelectDownloadPath(event: IpcMainInvokeEvent) {
   return null;
 }
 
-async function handleAnalyzeUrl(event: IpcMainInvokeEvent, url: string, useCookies: boolean, overrideReferer?: string) {
-  let tempCookiePath: string | null = null;
-  
+async function handleAnalyzeUrl(event: IpcMainInvokeEvent, url: string, overrideReferer?: string) {
   // Clean URL: remove trailing slash if it's a file-like URL (.m3u8/ -> .m3u8)
   let targetUrl = url.trim();
   if (targetUrl.toLowerCase().match(/\.(m3u8|mp4|mpd|m4v|ts)\/$/)) {
@@ -317,10 +301,6 @@ async function handleAnalyzeUrl(event: IpcMainInvokeEvent, url: string, useCooki
       '-4',
     ];
 
-    if (useCookies && tempCookiePath) {
-      args.unshift('--cookies', tempCookiePath);
-    }
-
     // If it's already a direct media link, we don't need heavy format checking
     if (!isDirectMedia && advanced) {
       args.push('--geo-bypass', '--check-formats');
@@ -333,10 +313,6 @@ async function handleAnalyzeUrl(event: IpcMainInvokeEvent, url: string, useCooki
   };
 
   try {
-    if (useCookies) {
-      tempCookiePath = createTempCookieFile('analyze');
-    }
-
     const tryRun = async (currentArgs: string[]) => {
       const { stdout } = await execFilePromise(YTDLP_PATH, currentArgs);
       return JSON.parse(stdout);
@@ -378,10 +354,6 @@ async function handleAnalyzeUrl(event: IpcMainInvokeEvent, url: string, useCooki
                       "This usually means a Referer or Cookie is missing. Try analyzing again using the 'Detected URL' from the extension.";
     }
     return { success: false, error: errorMessage };
-  } finally {
-    if (tempCookiePath && fs.existsSync(tempCookiePath)) {
-      try { fs.unlinkSync(tempCookiePath); } catch (e) { /* ignore */ }
-    }
   }
 }
 
@@ -390,7 +362,7 @@ function sanitizeFilename(filename: string) {
   return filename.replace(/[<>:"/\\|?*]/g, '_').trim();
 }
 
-async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string, formatId: string, url: string, useCookies: boolean, overrideReferer?: string, customTitle?: string) {
+async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string, formatId: string, url: string, overrideReferer?: string, customTitle?: string) {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (!window) return { success: false, error: 'No main window found.' };
 
@@ -404,7 +376,6 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
   let outputTemplate = path.join(currentConfig.downloadPath, '%(title)s.%(ext)s');
   if (customTitle) {
     const safeTitle = sanitizeFilename(customTitle);
-    const extension = targetUrl.toLowerCase().includes('.m3u8') ? 'mp4' : 'mp4'; // Default to mp4 for custom titles if unknown, yt-dlp will handle actual ext
     
     // Check for existing files and add suffix if necessary to prevent overwrites
     let finalTitle = safeTitle;
@@ -423,8 +394,6 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
     outputTemplate = path.join(currentConfig.downloadPath, `${finalTitle}.%(ext)s`);
   }
 
-  let tempCookiePath: string | null = null;
-
   try {
     const urlObject = new URL(targetUrl);
     const origin = urlObject.origin;
@@ -442,21 +411,27 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
       '--legacy-server-connect',
       '--socket-timeout', '60',
       '-4',
-      // --- IDM-style Speed Optimizations ---
+      // ... IDM-style Speed Optimizations ...
       '--concurrent-fragments', '5',      // Download 5 fragments at once (HLS/DASH)
       '--buffer-size', '1M',              // Larger buffer for faster throughput
       '--no-mtime',                       // Don't waste time sync-ing file modification time
       '--newline',                        // Output progress on new lines for faster parsing
     ];
 
-    if (useCookies) {
-      tempCookiePath = createTempCookieFile('dl');
-      if (tempCookiePath) args.unshift('--cookies', tempCookiePath);
-    }
-
     args.push(targetUrl);
 
     const ytdlp = spawn(YTDLP_PATH, args);
+    
+    // Handle startup errors (e.g., file not found, permission denied)
+    ytdlp.on('error', (err) => {
+      console.error('yt-dlp spawn error:', err);
+      if (window && !window.isDestroyed()) {
+        window.webContents.send('download-progress', { 
+          downloadId, formatId, percentage: 0, status: 'failed' 
+        });
+      }
+    });
+
     activeDownloads.set(downloadId, ytdlp);
     updatePowerSaveBlocker();
 
@@ -496,9 +471,6 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
 
     return new Promise((resolve) => {
       ytdlp.on('close', (code: number) => {
-        if (tempCookiePath && fs.existsSync(tempCookiePath)) {
-          try { fs.unlinkSync(tempCookiePath); } catch (e) { /* ignore */ }
-        }
         activeDownloads.delete(downloadId);
         updatePowerSaveBlocker();
         if (code === 0) {
@@ -511,9 +483,6 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
     });
 
   } catch (error) {
-    if (tempCookiePath && fs.existsSync(tempCookiePath)) {
-      try { fs.unlinkSync(tempCookiePath); } catch (e) { /* ignore */ }
-    }
     activeDownloads.delete(downloadId);
     updatePowerSaveBlocker();
     return { success: false, error: (error as Error).message, downloadId };
@@ -524,12 +493,16 @@ async function handleCancelDownload(event: IpcMainInvokeEvent, downloadId: strin
   const ytdlp = activeDownloads.get(downloadId);
   if (ytdlp) {
     try {
-      execSync(`taskkill /F /T /PID ${ytdlp.pid}`);
+      exec(`taskkill /F /T /PID ${ytdlp.pid}`, (err: any) => {
+        if (err) {
+          try { ytdlp.kill('SIGKILL'); } catch (e) { /* ignore kill error */ }
+        }
+      });
       activeDownloads.delete(downloadId);
       updatePowerSaveBlocker();
       return { success: true };
     } catch (e) {
-      ytdlp.kill('SIGKILL');
+      try { ytdlp.kill('SIGKILL'); } catch (e) { /* ignore kill error */ }
       activeDownloads.delete(downloadId);
       updatePowerSaveBlocker();
       return { success: true };
@@ -540,12 +513,15 @@ async function handleCancelDownload(event: IpcMainInvokeEvent, downloadId: strin
 
 // Global Handlers
 ipcMain.handle('analyze-url', handleAnalyzeUrl);
-ipcMain.handle('download-video', (event, downloadId, formatId, url, useCookies, referer, customTitle) => 
-  handleDownloadVideo(event, downloadId, formatId, url, useCookies, referer, customTitle)
+ipcMain.handle('download-video', (event, downloadId, formatId, url, referer, customTitle) => 
+  handleDownloadVideo(event, downloadId, formatId, url, referer, customTitle)
 );
 ipcMain.handle('cancel-download', handleCancelDownload);
 ipcMain.handle('get-download-path', handleGetDownloadPath);
 ipcMain.handle('select-download-path', handleSelectDownloadPath);
+ipcMain.on('app-quit', () => {
+  app.quit();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
