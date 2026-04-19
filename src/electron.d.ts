@@ -3,6 +3,8 @@ export interface IElectronAPI {
   downloadVideo: (downloadId: string, formatId: string, url: string, referer?: string, customTitle?: string) => Promise<any>;
   cancelDownload: (downloadId: string) => Promise<any>;
   getDownloadPath: () => Promise<string>;
+  getConfig: () => Promise<any>;
+  updateConfig: (config: any) => Promise<void>;
   selectDownloadPath: () => Promise<string | null>;
   quitApp: () => void;
   onDownloadProgress: (callback: (progress: any) => void) => void;

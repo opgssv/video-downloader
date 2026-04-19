@@ -49,7 +49,9 @@ function loadConfig() {
   const defaults = { 
     downloadPath: app.getPath('downloads'),
     width: 1200,
-    height: 900
+    height: 900,
+    autoRemoveCompleted: false,
+    autoQuitOnFinish: false
   };
   try {
     if (fs.existsSync(CONFIG_PATH)) {
@@ -258,6 +260,15 @@ async function handleGetDownloadPath() {
   return currentConfig.downloadPath;
 }
 
+async function handleGetConfig() {
+  return currentConfig;
+}
+
+async function handleUpdateConfig(event: IpcMainInvokeEvent, newConfig: any) {
+  Object.assign(currentConfig, newConfig);
+  saveConfig(currentConfig);
+}
+
 async function handleSelectDownloadPath(event: IpcMainInvokeEvent) {
   const window = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showOpenDialog(window!, {
@@ -411,6 +422,7 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
       '--legacy-server-connect',
       '--socket-timeout', '60',
       '-4',
+      '--no-cache-dir',                   // Prevent cache-related conflicts between consecutive downloads
       // ... IDM-style Speed Optimizations ...
       '--concurrent-fragments', '5',      // Download 5 fragments at once (HLS/DASH)
       '--buffer-size', '1M',              // Larger buffer for faster throughput
@@ -518,6 +530,8 @@ ipcMain.handle('download-video', (event, downloadId, formatId, url, referer, cus
 );
 ipcMain.handle('cancel-download', handleCancelDownload);
 ipcMain.handle('get-download-path', handleGetDownloadPath);
+ipcMain.handle('get-config', handleGetConfig);
+ipcMain.handle('update-config', handleUpdateConfig);
 ipcMain.handle('select-download-path', handleSelectDownloadPath);
 ipcMain.on('app-quit', () => {
   app.quit();

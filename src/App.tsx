@@ -8,6 +8,9 @@ interface VideoFormat {
   filesize?: number;
   format_note?: string;
   protocol?: string;
+  // BIND source info to prevent state pollution during rapid consecutive downloads
+  sourceUrl?: string;
+  sourceReferer?: string;
 }
 
 interface DownloadItem {
@@ -44,10 +47,12 @@ function App() {
 
   useEffect(() => {
     autoRemoveRef.current = autoRemoveCompleted;
+    window.electronAPI.updateConfig({ autoRemoveCompleted });
   }, [autoRemoveCompleted]);
 
   useEffect(() => {
     autoQuitRef.current = autoQuitOnFinish;
+    window.electronAPI.updateConfig({ autoQuitOnFinish });
   }, [autoQuitOnFinish]);
 
   const handleAnalyze = useCallback(async (targetUrl?: string, overrideReferer?: string, manualTitle?: string) => {
@@ -88,16 +93,28 @@ function App() {
         extensionTitleRef.current = fallback;
       }
 
-      let filteredFormats = result.data.formats.filter(
+      let filteredFormats = result.data.formats.map((f: VideoFormat) => ({
+        ...f,
+        sourceUrl: finalUrl,
+        sourceReferer: finalReferer
+      })).filter(
         (f: VideoFormat) => f.filesize || (f.protocol && (f.protocol.includes('m3u8') || f.protocol.includes('dash')))
       );
 
       if (filteredFormats.length === 0) {
-        filteredFormats = result.data.formats.filter((f: VideoFormat) => f.resolution && f.resolution !== 'multiple');
+        filteredFormats = result.data.formats.map((f: VideoFormat) => ({
+          ...f,
+          sourceUrl: finalUrl,
+          sourceReferer: finalReferer
+        })).filter((f: VideoFormat) => f.resolution && f.resolution !== 'multiple');
       }
       
       if (filteredFormats.length === 0) {
-        filteredFormats = result.data.formats;
+        filteredFormats = result.data.formats.map((f: VideoFormat) => ({
+          ...f,
+          sourceUrl: finalUrl,
+          sourceReferer: finalReferer
+        }));
       }
 
       setFormats(filteredFormats);
@@ -107,7 +124,11 @@ function App() {
   }, [url, referer]); // Removed useCookies from dependencies
 
   useEffect(() => {
-    window.electronAPI.getDownloadPath().then(path => setDownloadPath(path));
+    window.electronAPI.getConfig().then(config => {
+      setDownloadPath(config.downloadPath);
+      setAutoRemoveCompleted(config.autoRemoveCompleted);
+      setAutoQuitOnFinish(config.autoQuitOnFinish);
+    });
 
     window.electronAPI.onDownloadProgress((progress) => {
       setDownloads((prev) => {
@@ -166,7 +187,11 @@ function App() {
   const handleDownload = async (format: VideoFormat) => {
     const tempDownloadId = `${format.format_id}-${Date.now()}`;
     const currentTitle = title || extensionTitleRef.current || 'Downloaded Video';
-    const targetUrl = currentUrlRef.current || url; // Use ref primarily
+    
+    // CRITICAL: Use the BINDED URL and referer from the format object itself
+    // to prevent downloading the "currently analyzed" video instead of the intended one.
+    const targetUrl = format.sourceUrl || currentUrlRef.current || url;
+    const targetReferer = format.sourceReferer || referer;
     
     const newItem: DownloadItem = {
       downloadId: tempDownloadId,
@@ -181,8 +206,8 @@ function App() {
     
     setDownloads((prev) => [newItem, ...prev]);
 
-    // CRITICAL: Pass the absolute latest title AND URL to index.ts
-    const result = await window.electronAPI.downloadVideo(tempDownloadId, format.format_id, targetUrl, referer, currentTitle);
+    // Pass the decoupled targetUrl and targetReferer
+    const result = await window.electronAPI.downloadVideo(tempDownloadId, format.format_id, targetUrl, targetReferer, currentTitle);
 
     if (result.success && result.downloadId) {
       setDownloads((prev) => 
