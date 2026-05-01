@@ -14,7 +14,7 @@ if %errorLevel% == 0 (
 
 :run
 pushd "%~dp0"
-echo >>> Edge 확장 프로그램 권한 등록을 시작합니다...
+powershell -NoProfile -Command "Write-Host '>>> Edge 확장 프로그램 권한 등록을 시작합니다...' -ForegroundColor Cyan"
 
 :: 2. PowerShell 명령을 통한 레지스트리 작업 (안전한 인덱싱 포함)
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -27,12 +27,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     if (-not $isAlreadyRegistered) { ^
         $i = 1; while ($null -ne (Get-ItemProperty -Path $registryPath -Name \"$i\" -ErrorAction SilentlyContinue)) { $i++ }; ^
         New-ItemProperty -Path $registryPath -Name \"$i\" -Value $extensionId -PropertyType String -Force | Out-Null; ^
-        Write-Host '>>> 성공: 확장 프로그램 ID가 허용 목록에 등록되었습니다.' -ForegroundColor Green; ^
+        powershell -NoProfile -Command \"Write-Host '>>> 성공: 확장 프로그램 ID가 허용 목록에 등록되었습니다.' -ForegroundColor Green\"; ^
     } else { ^
-        Write-Host '>>> 정보: 이미 등록되어 있는 ID입니다.' -ForegroundColor Yellow; ^
+        powershell -NoProfile -Command \"Write-Host '>>> 정보: 이미 등록되어 있는 ID입니다.' -ForegroundColor Yellow\"; ^
     }; ^
     Write-Host ' ' ; ^
-    Write-Host '작업이 완료되었습니다. Edge 브라우저를 재시작하세요.' -ForegroundColor Cyan"
+    powershell -NoProfile -Command \"Write-Host '작업이 완료되었습니다. Edge 브라우저를 재시작하세요.' -ForegroundColor Cyan\"
 
 echo.
 echo Press any key to exit...

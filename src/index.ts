@@ -25,7 +25,7 @@ const PROTOCOL = 'video-downloader';
 
 let mainWindow: BrowserWindow | null = null;
 const currentConfig = loadConfig();
-const activeDownloads = new Map<string, any>();
+const activeDownloads = new Map<string, { process: any, outputPath: string }>();
 let psbId: number | null = null;
 
 // --- Helper to manage Power Save Blocker ---
@@ -384,26 +384,34 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
   }
 
   // Determine output template and handle potential name collisions
-  let outputTemplate = path.join(currentConfig.downloadPath, '%(title)s.%(ext)s');
-  if (customTitle) {
-    const safeTitle = sanitizeFilename(customTitle);
-    
-    // Check for existing files and add suffix if necessary to prevent overwrites
-    let finalTitle = safeTitle;
-    let counter = 1;
-    
-    // Note: We don't know the exact extension yet if it's dynamic, 
-    // but we can check for common ones or just the base name.
-    // For simplicity and effectiveness, we'll check common video extensions.
-    const commonExts = ['mp4', 'mkv', 'webm', 'ts'];
-    
-    while (commonExts.some(ext => fs.existsSync(path.join(currentConfig.downloadPath, `${finalTitle}.${ext}`)))) {
-      finalTitle = `${safeTitle} (${counter})`;
-      counter++;
+  const commonExts = ['mp4', 'mkv', 'webm', 'ts', 'mp3', 'm4a', 'm4v'];
+  let finalTitle = sanitizeFilename(customTitle || 'Downloaded Video');
+  let counter = 1;
+
+  const isPathInUse = (title: string) => {
+    // 1. Check physical files on disk
+    for (const ext of commonExts) {
+      const fullPath = path.join(currentConfig.downloadPath, `${title}.${ext}`);
+      if (fs.existsSync(fullPath)) return true;
+      if (fs.existsSync(fullPath + '.part')) return true;
     }
-    
-    outputTemplate = path.join(currentConfig.downloadPath, `${finalTitle}.%(ext)s`);
+
+    // 2. Check active downloads in the app's memory to prevent race conditions
+    for (const item of activeDownloads.values()) {
+      const activeName = path.basename(item.outputPath, path.extname(item.outputPath));
+      // Simple string comparison for titles
+      if (activeName.toLowerCase() === title.toLowerCase()) return true;
+    }
+    return false;
+  };
+
+  let testTitle = finalTitle;
+  while (isPathInUse(testTitle)) {
+    testTitle = `${finalTitle} (${counter})`;
+    counter++;
   }
+  finalTitle = testTitle;
+  let outputTemplate = path.join(currentConfig.downloadPath, `${finalTitle}.%(ext)s`);
 
   try {
     const urlObject = new URL(targetUrl);
@@ -444,7 +452,7 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
       }
     });
 
-    activeDownloads.set(downloadId, ytdlp);
+    activeDownloads.set(downloadId, { process: ytdlp, outputPath: outputTemplate });
     updatePowerSaveBlocker();
 
     // Immediate feedback to UI
@@ -502,8 +510,9 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
 }
 
 async function handleCancelDownload(event: IpcMainInvokeEvent, downloadId: string) {
-  const ytdlp = activeDownloads.get(downloadId);
-  if (ytdlp) {
+  const item = activeDownloads.get(downloadId);
+  if (item && item.process) {
+    const ytdlp = item.process;
     try {
       exec(`taskkill /F /T /PID ${ytdlp.pid}`, (err: any) => {
         if (err) {

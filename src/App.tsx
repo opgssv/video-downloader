@@ -36,6 +36,7 @@ function App() {
   const [referer, setReferer] = useState<string | undefined>(undefined);
   const [autoRemoveCompleted, setAutoRemoveCompleted] = useState(false);
   const [autoQuitOnFinish, setAutoQuitOnFinish] = useState(false);
+  const [isConfigLoaded, setIsConfigLoaded] = useState(false);
   
   // Use refs to keep track of the absolute latest URL and title to avoid stale closures in handleDownload
   const extensionTitleRef = useRef<string>('');
@@ -47,20 +48,28 @@ function App() {
 
   useEffect(() => {
     autoRemoveRef.current = autoRemoveCompleted;
-    window.electronAPI.updateConfig({ autoRemoveCompleted });
-  }, [autoRemoveCompleted]);
+    if (isConfigLoaded) {
+      window.electronAPI.updateConfig({ autoRemoveCompleted });
+    }
+  }, [autoRemoveCompleted, isConfigLoaded]);
 
   useEffect(() => {
     autoQuitRef.current = autoQuitOnFinish;
-    window.electronAPI.updateConfig({ autoQuitOnFinish });
-  }, [autoQuitOnFinish]);
+    if (isConfigLoaded) {
+      window.electronAPI.updateConfig({ autoQuitOnFinish });
+    }
+  }, [autoQuitOnFinish, isConfigLoaded]);
 
   const handleAnalyze = useCallback(async (targetUrl?: string, overrideReferer?: string, manualTitle?: string) => {
     const finalUrl = targetUrl || url;
-    if (targetUrl) currentUrlRef.current = targetUrl; // Update ref if incoming from extension
+    if (targetUrl) currentUrlRef.current = targetUrl;
     
     const finalReferer = overrideReferer || referer;
-    const initialTitle = manualTitle || extensionTitleRef.current;
+    
+    // Determine the baseline title: 
+    // 1. If manualTitle is provided (extension/manual call), use it.
+    // 2. Otherwise, use the current title state.
+    const baselineTitle = manualTitle || title;
     
     if (!finalUrl) {
       setError('Please enter a URL.');
@@ -70,28 +79,37 @@ function App() {
     setError(null);
     setFormats([]);
     
-    // Set initial title from extension if available
-    if (initialTitle) setTitle(initialTitle);
+    if (baselineTitle) setTitle(baselineTitle);
 
     const result = await window.electronAPI.analyzeUrl(finalUrl, finalReferer);
 
     setIsLoading(false);
     if (result.success) {
       const ytDlpTitle = result.data.title;
-      const isGeneric = !ytDlpTitle || ['playlist', 'video', 'index', 'downloaded video'].includes(ytDlpTitle.toLowerCase());
+      const genericTitles = ['playlist', 'video', 'index', 'downloaded video', 'media', 'stream', 'output', 'original', 'download'];
+      const isYtDlpTitleGeneric = !ytDlpTitle || genericTitles.includes(ytDlpTitle.toLowerCase());
       
-      // Update title and ref only if yt-dlp has a specific name
-      if (!isGeneric) {
+      // Overwrite only if:
+      // - The current baseline title is empty or generic
+      // - AND the new ytDlpTitle is specific (not generic)
+      const isBaselineGeneric = !baselineTitle || genericTitles.includes(baselineTitle.toLowerCase());
+
+      if (isBaselineGeneric && !isYtDlpTitleGeneric) {
         setTitle(ytDlpTitle);
         extensionTitleRef.current = ytDlpTitle;
-      } else if (initialTitle) {
-        setTitle(initialTitle);
-        extensionTitleRef.current = initialTitle;
-      } else if (!ytDlpTitle && !initialTitle) {
+      } else if (baselineTitle) {
+        // Keep the baseline title (extension or manual input)
+        setTitle(baselineTitle);
+        extensionTitleRef.current = baselineTitle;
+      } else if (!isYtDlpTitleGeneric) {
+        setTitle(ytDlpTitle);
+        extensionTitleRef.current = ytDlpTitle;
+      } else {
         const fallback = 'Downloaded Video';
         setTitle(fallback);
         extensionTitleRef.current = fallback;
       }
+      // ... rest of the logic
 
       let filteredFormats = result.data.formats.map((f: VideoFormat) => ({
         ...f,
@@ -121,13 +139,14 @@ function App() {
     } else {
       setError(result.error || 'An unknown error occurred.');
     }
-  }, [url, referer]); // Removed useCookies from dependencies
+  }, [url, referer, title]);
 
   useEffect(() => {
     window.electronAPI.getConfig().then(config => {
       setDownloadPath(config.downloadPath);
       setAutoRemoveCompleted(config.autoRemoveCompleted);
       setAutoQuitOnFinish(config.autoQuitOnFinish);
+      setIsConfigLoaded(true);
     });
 
     window.electronAPI.onDownloadProgress((progress) => {
