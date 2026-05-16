@@ -23,24 +23,31 @@ interface DownloadItem {
   totalSize: string;
   downloadedSize?: string;
   status: 'downloading' | 'completed' | 'failed' | 'cancelled';
+  // Extra fields for resuming
+  url?: string;
+  referer?: string;
+}
+
+interface AnalyzedItem {
+  id: string;
+  url: string;
+  referer?: string;
+  title: string;
+  formats: VideoFormat[];
+  isLoading: boolean;
+  error: string | null;
+  isDuplicate: boolean;
 }
 
 function App() {
   const [url, setUrl] = useState('');
-  const [formats, setFormats] = useState<VideoFormat[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [title, setTitle] = useState('');
+  const [analyzedItems, setAnalyzedItems] = useState<AnalyzedItem[]>([]);
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
+  const [history, setHistory] = useState<any[]>([]);
   const [downloadPath, setDownloadPath] = useState('');
-  const [referer, setReferer] = useState<string | undefined>(undefined);
   const [autoRemoveCompleted, setAutoRemoveCompleted] = useState(false);
   const [autoQuitOnFinish, setAutoQuitOnFinish] = useState(false);
   const [isConfigLoaded, setIsConfigLoaded] = useState(false);
-  
-  // Use refs to keep track of the absolute latest URL and title to avoid stale closures in handleDownload
-  const extensionTitleRef = useRef<string>('');
-  const currentUrlRef = useRef<string>('');
   
   // Keep track of options in refs so the progress listener can access their latest values
   const autoRemoveRef = useRef(autoRemoveCompleted);
@@ -60,94 +67,183 @@ function App() {
     }
   }, [autoQuitOnFinish, isConfigLoaded]);
 
+  // Persistence: Save queue whenever downloads state changes
+  useEffect(() => {
+    if (isConfigLoaded) {
+      window.electronAPI.updateQueue(downloads);
+    }
+  }, [downloads, isConfigLoaded]);
+
+  const fetchHistory = useCallback(async () => {
+    const data = await window.electronAPI.getHistory();
+    setHistory(data);
+  }, []);
+
+  const handleDownloadWithId = async (format: VideoFormat, itemTitle: string, itemId: string) => {
+    const tempDownloadId = `${format.format_id}-${Date.now()}`;
+    const targetUrl = format.sourceUrl || '';
+    const targetReferer = format.sourceReferer;
+    
+    const newItem: DownloadItem = {
+      downloadId: tempDownloadId,
+      formatId: format.format_id,
+      title: itemTitle,
+      percentage: 0,
+      speed: 'Waiting...',
+      eta: 'N/A',
+      totalSize: formatBytes(format.filesize),
+      status: 'downloading',
+      url: targetUrl,
+      referer: targetReferer
+    };
+    
+    setDownloads((prev) => [newItem, ...prev]);
+    setAnalyzedItems(prev => prev.filter(item => item.id !== itemId));
+
+    const result = await window.electronAPI.downloadVideo(tempDownloadId, format.format_id, targetUrl, targetReferer, itemTitle);
+
+    if (result.success && result.downloadId) {
+      setDownloads((prev) => 
+        prev.map((item) => 
+          item.downloadId === tempDownloadId ? { ...item, downloadId: result.downloadId } : item
+        )
+      );
+      fetchHistory();
+    } else if (!result.success) {
+      setDownloads((prev) => 
+        prev.map((item) => 
+          item.downloadId === tempDownloadId ? { ...item, status: 'failed' } : item
+        )
+      );
+    }
+  };
+
+  // Logic to re-trigger a download for resuming
+  const resumeDownload = useCallback(async (item: DownloadItem) => {
+    if (!item.url) return;
+    
+    // Reset status to downloading to show UI activity
+    setDownloads(prev => prev.map(d => d.downloadId === item.downloadId ? { ...d, status: 'downloading', speed: 'Resuming...' } : d));
+    
+    const result = await window.electronAPI.downloadVideo(item.downloadId, item.formatId, item.url, item.referer, item.title);
+    
+    if (result.success) {
+      fetchHistory();
+    } else {
+      setDownloads(prev => prev.map(d => d.downloadId === item.downloadId ? { ...d, status: 'failed' } : d));
+    }
+  }, [fetchHistory]);
+
   const handleAnalyze = useCallback(async (targetUrl?: string, overrideReferer?: string, manualTitle?: string) => {
     const finalUrl = targetUrl || url;
-    if (targetUrl) currentUrlRef.current = targetUrl;
-    
-    const finalReferer = overrideReferer || referer;
-    
-    // Determine the baseline title: 
-    // 1. If manualTitle is provided (extension/manual call), use it.
-    // 2. Otherwise, use the current title state.
-    const baselineTitle = manualTitle || title;
-    
-    if (!finalUrl) {
-      setError('Please enter a URL.');
-      return;
-    }
-    setIsLoading(true);
-    setError(null);
-    setFormats([]);
-    
-    if (baselineTitle) setTitle(baselineTitle);
+    if (!finalUrl) return;
 
-    const result = await window.electronAPI.analyzeUrl(finalUrl, finalReferer);
+    const id = Date.now().toString();
+    const newItem: AnalyzedItem = {
+      id,
+      url: finalUrl,
+      referer: overrideReferer,
+      title: manualTitle || '',
+      formats: [],
+      isLoading: true,
+      error: null,
+      isDuplicate: false
+    };
 
-    setIsLoading(false);
-    if (result.success) {
+    setAnalyzedItems(prev => [newItem, ...prev]);
+    if (!targetUrl) setUrl(''); 
+
+    const result = await window.electronAPI.analyzeUrl(finalUrl, overrideReferer);
+
+    setAnalyzedItems(prev => prev.map(item => {
+      if (item.id !== id) return item;
+
+      if (!result.success) {
+        return { ...item, isLoading: false, error: result.error || 'Analysis failed' };
+      }
+
       const ytDlpTitle = result.data.title;
       const genericTitles = ['playlist', 'video', 'index', 'downloaded video', 'media', 'stream', 'output', 'original', 'download'];
       const isYtDlpTitleGeneric = !ytDlpTitle || genericTitles.includes(ytDlpTitle.toLowerCase());
       
-      // Overwrite only if:
-      // - The current baseline title is empty or generic
-      // - AND the new ytDlpTitle is specific (not generic)
+      const baselineTitle = item.title;
       const isBaselineGeneric = !baselineTitle || genericTitles.includes(baselineTitle.toLowerCase());
 
+      let finalTitle = fallbackTitle;
       if (isBaselineGeneric && !isYtDlpTitleGeneric) {
-        setTitle(ytDlpTitle);
-        extensionTitleRef.current = ytDlpTitle;
+        finalTitle = ytDlpTitle;
       } else if (baselineTitle) {
-        // Keep the baseline title (extension or manual input)
-        setTitle(baselineTitle);
-        extensionTitleRef.current = baselineTitle;
+        finalTitle = baselineTitle;
       } else if (!isYtDlpTitleGeneric) {
-        setTitle(ytDlpTitle);
-        extensionTitleRef.current = ytDlpTitle;
+        finalTitle = ytDlpTitle;
       } else {
-        const fallback = 'Downloaded Video';
-        setTitle(fallback);
-        extensionTitleRef.current = fallback;
+        finalTitle = 'Downloaded Video';
       }
-      // ... rest of the logic
 
-      let filteredFormats = result.data.formats.map((f: VideoFormat) => ({
+      const isDuplicate = history.some(h => h.title.toLowerCase() === finalTitle.toLowerCase());
+
+      let filteredFormats = result.data.formats.map((f: any) => ({
         ...f,
         sourceUrl: finalUrl,
-        sourceReferer: finalReferer
+        sourceReferer: overrideReferer
       })).filter(
-        (f: VideoFormat) => f.filesize || (f.protocol && (f.protocol.includes('m3u8') || f.protocol.includes('dash')))
+        (f: any) => f.filesize || (f.protocol && (f.protocol.includes('m3u8') || f.protocol.includes('dash')))
       );
 
       if (filteredFormats.length === 0) {
-        filteredFormats = result.data.formats.map((f: VideoFormat) => ({
+        filteredFormats = result.data.formats.map((f: any) => ({
           ...f,
           sourceUrl: finalUrl,
-          sourceReferer: finalReferer
-        })).filter((f: VideoFormat) => f.resolution && f.resolution !== 'multiple');
+          sourceReferer: overrideReferer
+        })).filter((f: any) => f.resolution && f.resolution !== 'multiple');
       }
       
       if (filteredFormats.length === 0) {
-        filteredFormats = result.data.formats.map((f: VideoFormat) => ({
+        filteredFormats = result.data.formats.map((f: any) => ({
           ...f,
           sourceUrl: finalUrl,
-          sourceReferer: finalReferer
+          sourceReferer: overrideReferer
         }));
       }
 
-      setFormats(filteredFormats);
-    } else {
-      setError(result.error || 'An unknown error occurred.');
+      return {
+        ...item,
+        isLoading: false,
+        title: finalTitle,
+        formats: filteredFormats,
+        isDuplicate
+      };
+    }));
+  }, [url, history]);
+
+  useEffect(() => {
+    const itemToAutoDownload = analyzedItems.find(item => !item.isLoading && !item.error && item.formats.length === 1);
+    if (itemToAutoDownload) {
+      handleDownloadWithId(itemToAutoDownload.formats[0], itemToAutoDownload.title, itemToAutoDownload.id);
     }
-  }, [url, referer, title]);
+  }, [analyzedItems]);
 
   useEffect(() => {
     window.electronAPI.getConfig().then(config => {
       setDownloadPath(config.downloadPath);
       setAutoRemoveCompleted(config.autoRemoveCompleted);
       setAutoQuitOnFinish(config.autoQuitOnFinish);
-      setIsConfigLoaded(true);
+      
+      // After config, load queue and resume
+      window.electronAPI.getQueue().then(savedQueue => {
+        setDownloads(savedQueue);
+        setIsConfigLoaded(true); // Now we can sync back changes
+        
+        // Auto-resume unfinished ones
+        savedQueue.forEach((item: DownloadItem) => {
+          if (item.status === 'downloading') {
+            resumeDownload(item);
+          }
+        });
+      });
     });
+    
+    fetchHistory();
 
     window.electronAPI.onDownloadProgress((progress) => {
       setDownloads((prev) => {
@@ -172,15 +268,12 @@ function App() {
           return item;
         });
 
-        // 1. Auto-remove logic
         let finalItems = next;
         if (autoRemoveRef.current && progress.status === 'completed') {
           finalItems = next.filter(item => item.downloadId !== progress.downloadId);
-          // Recalculate if anything is still downloading after removal
           isAnyStillDownloading = finalItems.some(i => i.status === 'downloading');
         }
 
-        // 2. Auto-quit logic
         if (autoQuitRef.current && !isAnyStillDownloading && progress.status === 'completed') {
           setTimeout(() => {
             window.electronAPI.quitApp();
@@ -192,57 +285,9 @@ function App() {
     });
 
     window.electronAPI.onFromExtension((incomingUrl: string, originalUrl?: string, incomingTitle?: string) => {
-      setUrl(incomingUrl);
-      currentUrlRef.current = incomingUrl; // Update ref immediately
-      if (originalUrl) setReferer(originalUrl);
-      if (incomingTitle) {
-        extensionTitleRef.current = incomingTitle;
-        setTitle(incomingTitle);
-      }
       handleAnalyze(incomingUrl, originalUrl, incomingTitle);
     });
-  }, [handleAnalyze]);
-
-  const handleDownload = async (format: VideoFormat) => {
-    const tempDownloadId = `${format.format_id}-${Date.now()}`;
-    const currentTitle = title || extensionTitleRef.current || 'Downloaded Video';
-    
-    // CRITICAL: Use the BINDED URL and referer from the format object itself
-    // to prevent downloading the "currently analyzed" video instead of the intended one.
-    const targetUrl = format.sourceUrl || currentUrlRef.current || url;
-    const targetReferer = format.sourceReferer || referer;
-    
-    const newItem: DownloadItem = {
-      downloadId: tempDownloadId,
-      formatId: format.format_id,
-      title: currentTitle,
-      percentage: 0,
-      speed: 'Waiting...',
-      eta: 'N/A',
-      totalSize: formatBytes(format.filesize),
-      status: 'downloading',
-    };
-    
-    setDownloads((prev) => [newItem, ...prev]);
-
-    // Pass the decoupled targetUrl and targetReferer
-    const result = await window.electronAPI.downloadVideo(tempDownloadId, format.format_id, targetUrl, targetReferer, currentTitle);
-
-    if (result.success && result.downloadId) {
-      setDownloads((prev) => 
-        prev.map((item) => 
-          item.downloadId === tempDownloadId ? { ...item, downloadId: result.downloadId } : item
-        )
-      );
-    } else if (!result.success) {
-      setDownloads((prev) => 
-        prev.map((item) => 
-          item.downloadId === tempDownloadId ? { ...item, status: 'failed' } : item
-        )
-      );
-      setError(`Failed to download ${format.format_id}: ${result.error}`);
-    }
-  };
+  }, [handleAnalyze, fetchHistory, resumeDownload]);
 
   const handleCancel = async (downloadId: string) => {
     const result = await window.electronAPI.cancelDownload(downloadId);
@@ -271,9 +316,17 @@ function App() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !isLoading) {
+    if (e.key === 'Enter') {
       handleAnalyze();
     }
+  };
+
+  const removeItem = (id: string) => {
+    setAnalyzedItems(prev => prev.filter(item => item.id !== id));
+  };
+
+  const updateItemTitle = (id: string, newTitle: string) => {
+    setAnalyzedItems(prev => prev.map(item => item.id === id ? { ...item, title: newTitle } : item));
   };
 
   const formatBytes = (bytes: number, decimals = 2) => {
@@ -284,6 +337,8 @@ function App() {
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
   }
+
+  const fallbackTitle = 'Downloaded Video';
 
   return (
     <div className="container">
@@ -325,56 +380,68 @@ function App() {
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Enter video URL"
-          disabled={isLoading}
         />
-        <button onClick={() => handleAnalyze()} disabled={isLoading}>
-          {isLoading ? 'Analyzing...' : 'Analyze'}
+        <button onClick={() => handleAnalyze()} disabled={url === ''}>
+          Analyze
         </button>
       </div>
 
-      {error && <div className="error-box">{error}</div>}
+      {/* Cumulative Analysis Inbox */}
+      <div className="analysis-inbox">
+        {analyzedItems.map((item) => (
+          <div key={item.id} className="analysis-card">
+            <button className="close-card-btn" onClick={() => removeItem(item.id)}>×</button>
+            {item.isLoading ? (
+              <div className="card-loading">Analyzing {item.url}...</div>
+            ) : item.error ? (
+              <div className="card-error">Error: {item.error}</div>
+            ) : (
+              <>
+                <div className="title-edit-container">
+                  <label>File Name:</label>
+                  <div className="title-input-wrapper">
+                    <input 
+                      type="text" 
+                      className="title-edit-input" 
+                      value={item.title} 
+                      onChange={(e) => updateItemTitle(item.id, e.target.value)} 
+                      placeholder="Enter file name"
+                    />
+                    {item.isDuplicate && <span className="duplicate-badge" title="최근 30일 이내에 다운로드한 적이 있는 제목입니다.">⚠️ 최근 다운로드됨</span>}
+                  </div>
+                </div>
+                <div className="results">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Format</th>
+                        <th>Ext</th>
+                        <th>Resolution</th>
+                        <th>Size</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {item.formats.map((format) => (
+                        <tr key={format.format_id}>
+                          <td>{format.format_id}</td>
+                          <td>{format.ext}</td>
+                          <td>{format.resolution}</td>
+                          <td>{formatBytes(format.filesize)}</td>
+                          <td>
+                            <button className="download-btn" onClick={() => handleDownloadWithId(format, item.title, item.id)}>Download</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        ))}
+      </div>
 
-      {/* Main Analysis Results */}
-      {title !== '' && (
-        <div className="analysis-results">
-          <div className="title-edit-container">
-            <label>File Name:</label>
-            <input 
-              type="text" 
-              className="title-edit-input" 
-              value={title} 
-              onChange={(e) => setTitle(e.target.value)} 
-              placeholder="Enter file name"
-            />
-          </div>
-          <div className="results">
-            <table>
-              <thead>
-                <tr>
-                  <th>Format</th>
-                  <th>Ext</th>
-                  <th>Resolution</th>
-                  <th>Size</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {formats.map((format) => (
-                  <tr key={format.format_id}>
-                    <td>{format.format_id}</td>
-                    <td>{format.ext}</td>
-                    <td>{format.resolution}</td>
-                    <td>{formatBytes(format.filesize)}</td>
-                    <td>
-                      <button className="download-btn" onClick={() => handleDownload(format)}>Download</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
       {/* Persistent Download Queue */}
       {downloads.length > 0 && (
         <div className="download-queue">

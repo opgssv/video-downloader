@@ -21,12 +21,50 @@ if (fs.existsSync(binPath)) {
 const YTDLP_PATH = path.join(binPath, 'yt-dlp.exe');
 
 const CONFIG_PATH = path.join(app.getPath('userData'), 'config.json');
+const HISTORY_PATH = path.join(app.getPath('userData'), 'history.json');
+const QUEUE_PATH = path.join(app.getPath('userData'), 'queue.json');
 const PROTOCOL = 'video-downloader';
 
 let mainWindow: BrowserWindow | null = null;
 const currentConfig = loadConfig();
+const currentHistory = loadHistory();
+let currentQueue = loadQueue();
 const activeDownloads = new Map<string, { process: any, outputPath: string }>();
 let psbId: number | null = null;
+
+// ... (config loading/saving remains same)
+
+// --- Queue Management ---
+interface QueueItem {
+  downloadId: string;
+  formatId: string;
+  url: string;
+  referer?: string;
+  title: string;
+  status: 'downloading' | 'completed' | 'failed' | 'cancelled';
+}
+
+function loadQueue(): QueueItem[] {
+  try {
+    if (fs.existsSync(QUEUE_PATH)) {
+      return JSON.parse(fs.readFileSync(QUEUE_PATH, 'utf-8'));
+    }
+  } catch (e) {
+    console.error('Failed to load queue', e);
+  }
+  return [];
+}
+
+function saveQueue(queue: QueueItem[]) {
+  try {
+    // Only save unfinished or recently failed items to keep queue clean
+    const filtered = queue.filter(item => item.status !== 'completed');
+    fs.writeFileSync(QUEUE_PATH, JSON.stringify(filtered));
+  } catch (e) {
+    console.error('Failed to save queue', e);
+  }
+}
+
 
 // --- Helper to manage Power Save Blocker ---
 function updatePowerSaveBlocker() {
@@ -70,6 +108,43 @@ function saveConfig(config: any) {
   } catch (e) {
     console.error('Failed to save config', e);
   }
+}
+
+// --- History Management ---
+interface HistoryEntry {
+  title: string;
+  timestamp: number;
+}
+
+function loadHistory(): HistoryEntry[] {
+  try {
+    if (fs.existsSync(HISTORY_PATH)) {
+      let history = JSON.parse(fs.readFileSync(HISTORY_PATH, 'utf-8'));
+      // Cleanup: 30 days (30 * 24 * 60 * 60 * 1000 ms)
+      const now = Date.now();
+      const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+      history = history.filter((entry: HistoryEntry) => (now - entry.timestamp) < thirtyDaysMs);
+      return history;
+    }
+  } catch (e) {
+    console.error('Failed to load history', e);
+  }
+  return [];
+}
+
+function saveHistory(history: HistoryEntry[]) {
+  try {
+    fs.writeFileSync(HISTORY_PATH, JSON.stringify(history));
+  } catch (e) {
+    console.error('Failed to save history', e);
+  }
+}
+
+function addToHistory(title: string) {
+  currentHistory.unshift({ title, timestamp: Date.now() });
+  // Keep history manageable (e.g., max 1000 entries) even within 30 days
+  if (currentHistory.length > 1000) currentHistory.length = 1000;
+  saveHistory(currentHistory);
 }
 
 // --- Protocol Handling ---
@@ -264,6 +339,20 @@ async function handleGetConfig() {
   return currentConfig;
 }
 
+async function handleGetHistory() {
+  return currentHistory;
+}
+
+async function handleGetQueue() {
+  return currentQueue;
+}
+
+async function handleUpdateQueue(event: IpcMainInvokeEvent, queue: QueueItem[]) {
+  currentQueue = queue;
+  saveQueue(currentQueue);
+}
+
+
 async function handleUpdateConfig(event: IpcMainInvokeEvent, newConfig: any) {
   Object.assign(currentConfig, newConfig);
   saveConfig(currentConfig);
@@ -413,6 +502,12 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
   finalTitle = testTitle;
   let outputTemplate = path.join(currentConfig.downloadPath, `${finalTitle}.%(ext)s`);
 
+  // Ensure .tmp folder exists for intermediate files
+  const tempDir = path.join(currentConfig.downloadPath, '.tmp');
+  if (!fs.existsSync(tempDir)) {
+    try { fs.mkdirSync(tempDir, { recursive: true }); } catch (e) { /* ignore */ }
+  }
+
   try {
     const urlObject = new URL(targetUrl);
     const origin = urlObject.origin;
@@ -421,8 +516,7 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
     const args = [
       '-f', formatId,
       '-o', outputTemplate,
-      '--no-part',
-      '--no-continue',
+      '-P', `temp:${tempDir}`,            // Store intermediate files in .tmp
       '--age-limit', '18',
       '--impersonate', 'edge',
       '--referer', referer,
@@ -430,12 +524,12 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
       '--legacy-server-connect',
       '--socket-timeout', '60',
       '-4',
-      '--no-cache-dir',                   // Prevent cache-related conflicts between consecutive downloads
+      '--no-cache-dir',
       // ... IDM-style Speed Optimizations ...
-      '--concurrent-fragments', '5',      // Download 5 fragments at once (HLS/DASH)
-      '--buffer-size', '1M',              // Larger buffer for faster throughput
-      '--no-mtime',                       // Don't waste time sync-ing file modification time
-      '--newline',                        // Output progress on new lines for faster parsing
+      '--concurrent-fragments', '5',
+      '--buffer-size', '1M',
+      '--no-mtime',
+      '--newline',
     ];
 
     args.push(targetUrl);
@@ -454,6 +548,9 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
 
     activeDownloads.set(downloadId, { process: ytdlp, outputPath: outputTemplate });
     updatePowerSaveBlocker();
+    
+    // Add to history
+    addToHistory(finalTitle);
 
     // Immediate feedback to UI
     window.webContents.send('download-progress', { 
@@ -540,6 +637,9 @@ ipcMain.handle('download-video', (event, downloadId, formatId, url, referer, cus
 ipcMain.handle('cancel-download', handleCancelDownload);
 ipcMain.handle('get-download-path', handleGetDownloadPath);
 ipcMain.handle('get-config', handleGetConfig);
+ipcMain.handle('get-history', handleGetHistory);
+ipcMain.handle('get-queue', handleGetQueue);
+ipcMain.handle('update-queue', handleUpdateQueue);
 ipcMain.handle('update-config', handleUpdateConfig);
 ipcMain.handle('select-download-path', handleSelectDownloadPath);
 ipcMain.on('app-quit', () => {
