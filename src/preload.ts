@@ -12,6 +12,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   updateConfig: (config: any) => ipcRenderer.invoke('update-config', config),
   selectDownloadPath: () => ipcRenderer.invoke('select-download-path'),
   quitApp: () => ipcRenderer.send('app-quit'),
-  onDownloadProgress: (callback: (progress: any) => void) => ipcRenderer.on('download-progress', (_event, value) => callback(value)),
-  onFromExtension: (callback: (url: string, originalUrl?: string, title?: string) => void) => ipcRenderer.on('from-extension', (_event, url, originalUrl, title) => callback(url, originalUrl, title)),
+  onDownloadProgress: (callback: (progress: any) => void) => {
+    const listener = (_event: any, value: any) => callback(value);
+    ipcRenderer.on('download-progress', listener);
+    return () => ipcRenderer.removeListener('download-progress', listener);
+  },
+  onFromExtension: (callback: (url: string, originalUrl?: string, title?: string) => void) => {
+    const listener = (_event: any, url: string, originalUrl?: string, title?: string) => callback(url, originalUrl, title);
+    ipcRenderer.on('from-extension', listener);
+    return () => ipcRenderer.removeListener('from-extension', listener);
+  },
 });

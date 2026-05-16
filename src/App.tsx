@@ -37,6 +37,7 @@ interface AnalyzedItem {
   isLoading: boolean;
   error: string | null;
   isDuplicate: boolean;
+  autoDownloadTriggered?: boolean;
 }
 
 function App() {
@@ -49,6 +50,12 @@ function App() {
   const [autoQuitOnFinish, setAutoQuitOnFinish] = useState(false);
   const [isConfigLoaded, setIsConfigLoaded] = useState(false);
   
+  const historyRef = useRef(history);
+  const analyzedItemsRef = useRef(analyzedItems);
+  
+  useEffect(() => { historyRef.current = history; }, [history]);
+  useEffect(() => { analyzedItemsRef.current = analyzedItems; }, [analyzedItems]);
+
   // Keep track of options in refs so the progress listener can access their latest values
   const autoRemoveRef = useRef(autoRemoveCompleted);
   const autoQuitRef = useRef(autoQuitOnFinish);
@@ -79,7 +86,7 @@ function App() {
     setHistory(data);
   }, []);
 
-  const handleDownloadWithId = async (format: VideoFormat, itemTitle: string, itemId: string) => {
+  const handleDownloadWithId = useCallback(async (format: VideoFormat, itemTitle: string, itemId: string) => {
     const tempDownloadId = `${format.format_id}-${Date.now()}`;
     const targetUrl = format.sourceUrl || '';
     const targetReferer = format.sourceReferer;
@@ -116,7 +123,7 @@ function App() {
         )
       );
     }
-  };
+  }, [fetchHistory]);
 
   // Logic to re-trigger a download for resuming
   const resumeDownload = useCallback(async (item: DownloadItem) => {
@@ -138,7 +145,7 @@ function App() {
     const finalUrl = targetUrl || url;
     if (!finalUrl) return;
 
-    const id = Date.now().toString();
+    const id = Date.now().toString() + Math.random().toString(36).substr(2, 5);
     const newItem: AnalyzedItem = {
       id,
       url: finalUrl,
@@ -169,18 +176,16 @@ function App() {
       const baselineTitle = item.title;
       const isBaselineGeneric = !baselineTitle || genericTitles.includes(baselineTitle.toLowerCase());
 
-      let finalTitle = fallbackTitle;
+      let finalTitle = 'Downloaded Video';
       if (isBaselineGeneric && !isYtDlpTitleGeneric) {
         finalTitle = ytDlpTitle;
       } else if (baselineTitle) {
         finalTitle = baselineTitle;
       } else if (!isYtDlpTitleGeneric) {
         finalTitle = ytDlpTitle;
-      } else {
-        finalTitle = 'Downloaded Video';
       }
 
-      const isDuplicate = history.some(h => h.title.toLowerCase() === finalTitle.toLowerCase());
+      const isDuplicate = historyRef.current.some(h => h.title.toLowerCase() === finalTitle.toLowerCase());
 
       let filteredFormats = result.data.formats.map((f: any) => ({
         ...f,
@@ -216,12 +221,22 @@ function App() {
     }));
   }, [url, history]);
 
+  // Use a Ref to store the latest handleAnalyze for the IPC listener
+  const handleAnalyzeRef = useRef(handleAnalyze);
+  useEffect(() => { handleAnalyzeRef.current = handleAnalyze; }, [handleAnalyze]);
+
+  // Effect to handle Auto-Download safety
   useEffect(() => {
-    const itemToAutoDownload = analyzedItems.find(item => !item.isLoading && !item.error && item.formats.length === 1);
+    const itemToAutoDownload = analyzedItems.find(item => 
+      !item.isLoading && !item.error && item.formats.length === 1 && !item.autoDownloadTriggered
+    );
+    
     if (itemToAutoDownload) {
+      // Mark as triggered immediately to prevent loop
+      setAnalyzedItems(prev => prev.map(i => i.id === itemToAutoDownload.id ? { ...i, autoDownloadTriggered: true } : i));
       handleDownloadWithId(itemToAutoDownload.formats[0], itemToAutoDownload.title, itemToAutoDownload.id);
     }
-  }, [analyzedItems]);
+  }, [analyzedItems, handleDownloadWithId]);
 
   useEffect(() => {
     window.electronAPI.getConfig().then(config => {
@@ -245,7 +260,8 @@ function App() {
     
     fetchHistory();
 
-    window.electronAPI.onDownloadProgress((progress) => {
+    // REGISTER LISTENERS ONCE WITH CLEANUP
+    const unregisterProgress = window.electronAPI.onDownloadProgress((progress) => {
       setDownloads((prev) => {
         let isAnyStillDownloading = false;
         const next = prev.map((item) => {
@@ -284,10 +300,17 @@ function App() {
       });
     });
 
-    window.electronAPI.onFromExtension((incomingUrl: string, originalUrl?: string, incomingTitle?: string) => {
-      handleAnalyze(incomingUrl, originalUrl, incomingTitle);
+    const unregisterExtension = window.electronAPI.onFromExtension((incomingUrl, originalUrl, incomingTitle) => {
+      // Use Ref to avoid re-registering listener when handleAnalyze changes
+      handleAnalyzeRef.current(incomingUrl, originalUrl, incomingTitle);
     });
-  }, [handleAnalyze, fetchHistory, resumeDownload]);
+
+    return () => {
+      unregisterProgress();
+      unregisterExtension();
+    };
+  }, [fetchHistory, resumeDownload]); // history/handleAnalyze no longer in dependencies
+
 
   const handleCancel = async (downloadId: string) => {
     const result = await window.electronAPI.cancelDownload(downloadId);

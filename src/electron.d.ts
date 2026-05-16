@@ -10,8 +10,8 @@ export interface IElectronAPI {
   updateConfig: (config: any) => Promise<void>;
   selectDownloadPath: () => Promise<string | null>;
   quitApp: () => void;
-  onDownloadProgress: (callback: (progress: any) => void) => void;
-  onFromExtension: (callback: (url: string, originalUrl?: string, title?: string) => void) => void;
+  onDownloadProgress: (callback: (progress: any) => void) => (() => void);
+  onFromExtension: (callback: (url: string, originalUrl?: string, title?: string) => void) => (() => void);
 }
 
 declare global {
