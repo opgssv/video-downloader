@@ -399,6 +399,7 @@ async function handleAnalyzeUrl(event: IpcMainInvokeEvent, url: string, override
       '--socket-timeout', '60',
       '--no-playlist',
       '-4',
+      '--no-cache-dir',
     ];
 
     // If it's already a direct media link, we don't need heavy format checking
@@ -477,19 +478,36 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
   let finalTitle = sanitizeFilename(customTitle || 'Downloaded Video');
   let counter = 1;
 
+  // Paths
+  const downloadDir = currentConfig.downloadPath;
+  const tempDir = path.join(downloadDir, '.tmp');
+
+  // Ensure .tmp folder exists for intermediate files
+  if (!fs.existsSync(tempDir)) {
+    try { fs.mkdirSync(tempDir, { recursive: true }); } catch (e) { /* ignore */ }
+  }
+
   const isPathInUse = (title: string) => {
-    // 1. Check physical files on disk
+    // 1. Check physical files on disk in BOTH main and temp folders
     for (const ext of commonExts) {
-      const fullPath = path.join(currentConfig.downloadPath, `${title}.${ext}`);
-      if (fs.existsSync(fullPath)) return true;
-      if (fs.existsSync(fullPath + '.part')) return true;
+      const pathsToCheck = [
+        path.join(downloadDir, `${title}.${ext}`),
+        path.join(downloadDir, `${title}.${ext}.part`),
+        path.join(tempDir, `${title}.${ext}`),
+        path.join(tempDir, `${title}.${ext}.part`),
+        path.join(tempDir, `${title}.f${formatId}.${ext}`), // yt-dlp format specific temp
+        path.join(tempDir, `${title}.${ext}.ytdl`)
+      ];
+      for (const p of pathsToCheck) {
+        if (fs.existsSync(p)) return true;
+      }
     }
 
     // 2. Check active downloads in the app's memory to prevent race conditions
     for (const item of activeDownloads.values()) {
-      const activeName = path.basename(item.outputPath, path.extname(item.outputPath));
-      // Simple string comparison for titles
-      if (activeName.toLowerCase() === title.toLowerCase()) return true;
+      // item.outputPath is the final intended template
+      const activeBase = path.basename(item.outputPath, path.extname(item.outputPath));
+      if (activeBase.toLowerCase() === title.toLowerCase()) return true;
     }
     return false;
   };
@@ -500,13 +518,12 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
     counter++;
   }
   finalTitle = testTitle;
-  let outputTemplate = path.join(currentConfig.downloadPath, `${finalTitle}.%(ext)s`);
 
-  // Ensure .tmp folder exists for intermediate files
-  const tempDir = path.join(currentConfig.downloadPath, '.tmp');
-  if (!fs.existsSync(tempDir)) {
-    try { fs.mkdirSync(tempDir, { recursive: true }); } catch (e) { /* ignore */ }
-  }
+  // Use Absolute Template pointing directly to .tmp directory
+  const finalFilenameTemplate = `${finalTitle}.%(ext)s`;
+  const absoluteTempTemplate = path.join(tempDir, finalFilenameTemplate);
+  // Store the expected final base name for moving later
+  const finalDestBasePath = path.join(downloadDir, finalTitle);
 
   try {
     const urlObject = new URL(targetUrl);
@@ -515,8 +532,7 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
 
     const args = [
       '-f', formatId,
-      '-o', outputTemplate,
-      '-P', `temp:${tempDir}`,            // Store intermediate files in .tmp
+      '-o', absoluteTempTemplate,       // Force ALL downloads into .tmp
       '--age-limit', '18',
       '--impersonate', 'edge',
       '--referer', referer,
@@ -525,7 +541,7 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
       '--socket-timeout', '60',
       '-4',
       '--no-cache-dir',
-      // ... IDM-style Speed Optimizations ...
+      // ... Speed Optimizations ...
       '--concurrent-fragments', '5',
       '--buffer-size', '1M',
       '--no-mtime',
@@ -536,17 +552,9 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
 
     const ytdlp = spawn(YTDLP_PATH, args);
     
-    // Handle startup errors (e.g., file not found, permission denied)
-    ytdlp.on('error', (err) => {
-      console.error('yt-dlp spawn error:', err);
-      if (window && !window.isDestroyed()) {
-        window.webContents.send('download-progress', { 
-          downloadId, formatId, percentage: 0, status: 'failed' 
-        });
-      }
-    });
+    // ...
+    activeDownloads.set(downloadId, { process: ytdlp, outputPath: finalDestBasePath }); // store base path for collision check
 
-    activeDownloads.set(downloadId, { process: ytdlp, outputPath: outputTemplate });
     updatePowerSaveBlocker();
     
     // Add to history
@@ -559,9 +567,6 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
 
     ytdlp.stdout.on('data', (data: Buffer) => {
       const line = data.toString();
-      // Improved regex to capture [download] percentage of totalSize at speed ETA eta
-      // Example: [download]  10.0% of 100.00MiB at 10.00MiB/s ETA 00:09
-      // Example HLS: [download]   0.5% of ~1.51GiB at 12.34MiB/s ETA 02:00
       const progressMatch = line.match(/\[download\]\s+(\d+\.?\d*)% of\s+(~?\s*[\d.]+\S+)\s+at\s+([\d.]+\S+)\s+ETA\s+(\S+)/);
       
       if (progressMatch) {
@@ -570,8 +575,6 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
         const speed = progressMatch[3] || 'N/A';
         const eta = progressMatch[4] || 'N/A';
         
-        // Calculate downloaded size approximately if not directly provided
-        // Most yt-dlp versions don't output "X MB of Y MB" in a single line, but we can derive it
         let downloadedSize = '0B';
         try {
           const totalVal = parseFloat(totalSize.replace(/~|\s|[a-zA-Z]/g, ''));
@@ -590,7 +593,30 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
       ytdlp.on('close', (code: number) => {
         activeDownloads.delete(downloadId);
         updatePowerSaveBlocker();
+        
         if (code === 0) {
+          // DOWNLOAD SUCCESS: Move the file from .tmp to the main folder
+          try {
+            // Find the actual file (since we don't know the exact extension %(ext)s resolved to)
+            const tempFiles = fs.readdirSync(tempDir);
+            for (const file of tempFiles) {
+              if (file.startsWith(finalTitle + '.') && !file.endsWith('.part') && !file.endsWith('.ytdl')) {
+                const oldPath = path.join(tempDir, file);
+                const newPath = path.join(downloadDir, file);
+                
+                // If it somehow exists (e.g. user moved something manually), avoid crashing
+                if (fs.existsSync(newPath)) {
+                  fs.unlinkSync(newPath);
+                }
+                
+                // Move it
+                fs.renameSync(oldPath, newPath);
+              }
+            }
+          } catch (moveError) {
+            console.error('Error moving file from temp:', moveError);
+          }
+
           window.webContents.send('download-progress', { downloadId, formatId, percentage: 100, status: 'completed' });
           resolve({ success: true, downloadId });
         } else {

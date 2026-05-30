@@ -68,7 +68,8 @@ async function loadCapturedUrls() {
     if (urls.length > 0) {
       document.getElementById('blockedTip').style.display = 'block';
       urlListContainer.innerHTML = '';
-      urls.forEach(url => {
+      // REVERSE the array so the newest link is at the top
+      [...urls].reverse().forEach(url => {
         const item = document.createElement('div');
         item.className = 'url-item';
         
