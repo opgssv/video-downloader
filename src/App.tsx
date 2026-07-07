@@ -11,6 +11,7 @@ interface VideoFormat {
   // BIND source info to prevent state pollution during rapid consecutive downloads
   sourceUrl?: string;
   sourceReferer?: string;
+  sourceCookie?: string;
 }
 
 interface DownloadItem {
@@ -26,6 +27,7 @@ interface DownloadItem {
   // Extra fields for resuming
   url?: string;
   referer?: string;
+  cookie?: string;
 }
 
 interface AnalyzedItem {
@@ -38,6 +40,7 @@ interface AnalyzedItem {
   error: string | null;
   isDuplicate: boolean;
   autoDownloadTriggered?: boolean;
+  cookie?: string;
 }
 
 function App() {
@@ -90,6 +93,7 @@ function App() {
     const tempDownloadId = `${format.format_id}-${Date.now()}`;
     const targetUrl = format.sourceUrl || '';
     const targetReferer = format.sourceReferer;
+    const targetCookie = format.sourceCookie;
     
     const newItem: DownloadItem = {
       downloadId: tempDownloadId,
@@ -101,13 +105,14 @@ function App() {
       totalSize: formatBytes(format.filesize),
       status: 'downloading',
       url: targetUrl,
-      referer: targetReferer
+      referer: targetReferer,
+      cookie: targetCookie
     };
     
     setDownloads((prev) => [newItem, ...prev]);
     setAnalyzedItems(prev => prev.filter(item => item.id !== itemId));
 
-    const result = await window.electronAPI.downloadVideo(tempDownloadId, format.format_id, targetUrl, targetReferer, itemTitle);
+    const result = await window.electronAPI.downloadVideo(tempDownloadId, format.format_id, targetUrl, targetReferer, itemTitle, targetCookie);
 
     if (result.success && result.downloadId) {
       setDownloads((prev) => 
@@ -132,7 +137,7 @@ function App() {
     // Reset status to downloading to show UI activity
     setDownloads(prev => prev.map(d => d.downloadId === item.downloadId ? { ...d, status: 'downloading', speed: 'Resuming...' } : d));
     
-    const result = await window.electronAPI.downloadVideo(item.downloadId, item.formatId, item.url, item.referer, item.title);
+    const result = await window.electronAPI.downloadVideo(item.downloadId, item.formatId, item.url, item.referer, item.title, item.cookie);
     
     if (result.success) {
       fetchHistory();
@@ -141,7 +146,7 @@ function App() {
     }
   }, [fetchHistory]);
 
-  const handleAnalyze = useCallback(async (targetUrl?: string, overrideReferer?: string, manualTitle?: string) => {
+  const handleAnalyze = useCallback(async (targetUrl?: string, overrideReferer?: string, manualTitle?: string, targetCookie?: string) => {
     const finalUrl = targetUrl || url;
     if (!finalUrl) return;
 
@@ -154,13 +159,14 @@ function App() {
       formats: [],
       isLoading: true,
       error: null,
-      isDuplicate: false
+      isDuplicate: false,
+      cookie: targetCookie
     };
 
     setAnalyzedItems(prev => [newItem, ...prev]);
     if (!targetUrl) setUrl(''); 
 
-    const result = await window.electronAPI.analyzeUrl(finalUrl, overrideReferer);
+    const result = await window.electronAPI.analyzeUrl(finalUrl, overrideReferer, targetCookie);
 
     setAnalyzedItems(prev => prev.map(item => {
       if (item.id !== id) return item;
@@ -190,7 +196,8 @@ function App() {
       let filteredFormats = result.data.formats.map((f: any) => ({
         ...f,
         sourceUrl: finalUrl,
-        sourceReferer: overrideReferer
+        sourceReferer: overrideReferer,
+        sourceCookie: targetCookie
       })).filter(
         (f: any) => f.filesize || (f.protocol && (f.protocol.includes('m3u8') || f.protocol.includes('dash')))
       );
@@ -199,7 +206,8 @@ function App() {
         filteredFormats = result.data.formats.map((f: any) => ({
           ...f,
           sourceUrl: finalUrl,
-          sourceReferer: overrideReferer
+          sourceReferer: overrideReferer,
+          sourceCookie: targetCookie
         })).filter((f: any) => f.resolution && f.resolution !== 'multiple');
       }
       
@@ -207,7 +215,8 @@ function App() {
         filteredFormats = result.data.formats.map((f: any) => ({
           ...f,
           sourceUrl: finalUrl,
-          sourceReferer: overrideReferer
+          sourceReferer: overrideReferer,
+          sourceCookie: targetCookie
         }));
       }
 
@@ -300,9 +309,9 @@ function App() {
       });
     });
 
-    const unregisterExtension = window.electronAPI.onFromExtension((incomingUrl, originalUrl, incomingTitle) => {
+    const unregisterExtension = window.electronAPI.onFromExtension((incomingUrl, originalUrl, incomingTitle, incomingCookie) => {
       // Use Ref to avoid re-registering listener when handleAnalyze changes
-      handleAnalyzeRef.current(incomingUrl, originalUrl, incomingTitle);
+      handleAnalyzeRef.current(incomingUrl, originalUrl, incomingTitle, incomingCookie);
     });
 
     return () => {

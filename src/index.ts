@@ -286,17 +286,76 @@ const createWindow = (): void => {
 };
 
 // --- Local Server for Edge Extension ---
+// Store the current referer for surrit.com proxy requests
+let currentSurritReferer = 'https://missav.com/';
+
 const startLocalServer = () => {
   const server = http.createServer();
   
   server.on('request', (req: any, res: any) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    // Reverse proxy: yt-dlp requests segments from here, we fetch from surrit.com via curl
+    if (req.method === 'GET' && req.url && req.url.startsWith('/proxy/')) {
+      const encodedUrl = req.url.substring('/proxy/'.length);
+      const segmentUrl = decodeURIComponent(encodedUrl);
+      
+      const curlArgs = [
+        '-s', '-L',
+        '-H', `Referer: ${currentSurritReferer}`,
+        '-H', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        '-H', 'Accept: */*',
+        '--output', '-',  // write to stdout
+        segmentUrl
+      ];
+      
+      const curl = spawn('curl.exe', curlArgs);
+      
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream' });
+      curl.stdout.pipe(res);
+      
+      curl.stderr.on('data', (data: Buffer) => {
+        // Suppress curl stderr progress
+      });
+      
+      curl.on('close', (code: number) => {
+        if (code !== 0) {
+          console.error(`[Proxy] curl failed for segment: ${segmentUrl} (code ${code})`);
+        }
+        if (!res.writableEnded) {
+          res.end();
+        }
+      });
+      
+      curl.on('error', (err: Error) => {
+        console.error('[Proxy] curl spawn error:', err);
+        if (!res.headersSent) {
+          res.writeHead(500);
+        }
+        res.end();
+      });
+      
+      return;
+    }
+
+    // Serve the rewritten m3u8 playlist (segments point to /proxy/...)
+    if (req.method === 'GET' && req.url === '/temp_playlist.m3u8') {
+      const tempFilePath = path.join(app.getPath('userData'), 'temp_playlist.m3u8');
+      if (fs.existsSync(tempFilePath)) {
+        res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+        res.end(fs.readFileSync(tempFilePath));
+      } else {
+        res.writeHead(404);
+        res.end('Playlist file not found');
+      }
       return;
     }
 
@@ -330,6 +389,47 @@ const startLocalServer = () => {
     console.log('Local API server listening on http://127.0.0.1:8888');
   });
 };
+
+// Download surrit.com m3u8, rewrite segments to proxy URLs, save locally
+async function downloadAndRewriteM3u8(url: string, referer: string): Promise<string | null> {
+  try {
+    // Store referer for proxy to use
+    currentSurritReferer = referer;
+    
+    const { stdout } = await execFilePromise('curl.exe', [
+      '-s', '-L',
+      '-H', `Referer: ${referer}`,
+      '-H', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      url
+    ]);
+    
+    if (!stdout || !stdout.includes('#EXTM3U')) {
+      console.error('[M3U8 Rewrite] Failed to fetch valid m3u8 playlist via curl');
+      return null;
+    }
+    
+    const baseUrl = url.substring(0, url.lastIndexOf('/') + 1);
+    const lines = stdout.split(/\r?\n/);
+    const rewrittenLines = lines.map(line => {
+      const trimmed = line.trim();
+      if (trimmed.length > 0 && !trimmed.startsWith('#')) {
+        // Convert segment to absolute URL, then route through local proxy
+        const absoluteUrl = trimmed.startsWith('http') ? trimmed : baseUrl + trimmed;
+        return 'http://127.0.0.1:8888/proxy/' + encodeURIComponent(absoluteUrl);
+      }
+      return line;
+    });
+    
+    const tempFilePath = path.join(app.getPath('userData'), 'temp_playlist.m3u8');
+    fs.writeFileSync(tempFilePath, rewrittenLines.join('\n'), 'utf-8');
+    console.log('[M3U8 Rewrite] Saved proxy-routed playlist to:', tempFilePath);
+    
+    return 'http://127.0.0.1:8888/temp_playlist.m3u8';
+  } catch (e) {
+    console.error('[M3U8 Rewrite] Error:', e);
+    return null;
+  }
+}
 // --- IPC Handlers ---
 async function handleGetDownloadPath() {
   return currentConfig.downloadPath;
@@ -377,6 +477,18 @@ async function handleAnalyzeUrl(event: IpcMainInvokeEvent, url: string, override
   if (targetUrl.toLowerCase().match(/\.(m3u8|mp4|mpd|m4v|ts)\/$/)) {
     targetUrl = targetUrl.slice(0, -1);
   }
+
+  // Intercept surrit.com HLS streams: download m3u8 via curl, rewrite segments to proxy URLs
+  if (targetUrl.includes('surrit.com') && targetUrl.includes('.m3u8')) {
+    const referer = overrideReferer || 'https://missav.com/';
+    console.log('[M3U8 Proxy] Intercepting surrit.com playlist for analysis...');
+    const localUrl = await downloadAndRewriteM3u8(targetUrl, referer);
+    if (localUrl) {
+      targetUrl = localUrl;
+    }
+  }
+
+  console.log(`[API/analyze-url] Target: ${targetUrl}, Referer: ${overrideReferer}`);
 
   const buildArgs = (urlToAnalyze: string, advanced = false) => {
     const urlObject = new URL(urlToAnalyze);
@@ -473,6 +585,18 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
     targetUrl = targetUrl.slice(0, -1);
   }
 
+  // Intercept surrit.com HLS streams for download too
+  if (targetUrl.includes('surrit.com') && targetUrl.includes('.m3u8')) {
+    const referer = overrideReferer || 'https://missav.com/';
+    console.log('[M3U8 Proxy] Intercepting surrit.com playlist for download...');
+    const localUrl = await downloadAndRewriteM3u8(targetUrl, referer);
+    if (localUrl) {
+      targetUrl = localUrl;
+    }
+  }
+
+  console.log(`[API/download-video] ID: ${downloadId}, Target: ${targetUrl}, Format: ${formatId}, Referer: ${overrideReferer}`);
+
   // Determine output template and handle potential name collisions
   const commonExts = ['mp4', 'mkv', 'webm', 'ts', 'mp3', 'm4a', 'm4v'];
   let finalTitle = sanitizeFilename(customTitle || 'Downloaded Video');
@@ -529,7 +653,6 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
     const urlObject = new URL(targetUrl);
     const origin = urlObject.origin;
     const referer = overrideReferer || (origin + '/');
-
     const args = [
       '-f', formatId,
       '-o', absoluteTempTemplate,       // Force ALL downloads into .tmp

@@ -3,8 +3,14 @@
   "name": "Video App Linker",
   "version": "1.0",
   "description": "Send video URLs to Video Downloader App",
-  "permissions": ["declarativeNetRequest", "webRequest", "tabs", "activeTab", "storage"],
-  "host_permissions": ["<all_urls>", "http://127.0.0.1:8888/*"],
+  "permissions": ["declarativeNetRequest", "webRequest", "tabs", "activeTab", "storage", "cookies"],
+  "host_permissions": [
+    "<all_urls>",
+    "*://*.surrit.com/*",
+    "*://*.missav.com/*",
+    "*://*.missav123.com/*",
+    "http://127.0.0.1:8888/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },

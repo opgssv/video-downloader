@@ -1,6 +1,39 @@
 const statusText = document.getElementById('statusText');
 const urlListContainer = document.getElementById('urlList');
 
+async function getCookiesForUrl(targetUrl, tabUrl) {
+  try {
+    // Query cookies by URL instead of domain to ensure browser matching rules are applied correctly
+    const targetCookies = await chrome.cookies.getAll({ url: targetUrl });
+    
+    let tabCookies = [];
+    if (tabUrl && tabUrl.startsWith('http')) {
+      try {
+        tabCookies = await chrome.cookies.getAll({ url: tabUrl });
+      } catch (err) {
+        console.error('Failed to get tab cookies:', err);
+      }
+    }
+    
+    const allCookies = [...targetCookies, ...tabCookies];
+    const uniqueCookies = [];
+    const seenNames = new Set();
+    for (const cookie of allCookies) {
+      if (!seenNames.has(cookie.name)) {
+        seenNames.add(cookie.name);
+        uniqueCookies.push(cookie);
+      }
+    }
+    
+    const cookieStr = uniqueCookies.map(c => `${c.name}=${c.value}`).join('; ');
+    console.log(`[Cookies Scraped] Target: ${targetUrl}, Found: ${uniqueCookies.length} cookies.`);
+    return cookieStr;
+  } catch (e) {
+    console.error('Failed to retrieve cookies:', e);
+    return '';
+  }
+}
+
 async function sendToApp(url, title = 'External Link') {
   statusText.innerText = 'Sending...';
   statusText.style.color = '#666';
@@ -8,11 +41,12 @@ async function sendToApp(url, title = 'External Link') {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const originalUrl = tab ? tab.url : '';
+    const cookie = await getCookiesForUrl(url, originalUrl);
 
     const response = await fetch('http://127.0.0.1:8888/send-url', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, title, originalUrl })
+      body: JSON.stringify({ url, title, originalUrl, cookie })
     });
 
     if (response.ok) {
@@ -30,11 +64,13 @@ async function sendToApp(url, title = 'External Link') {
     statusText.innerText = 'Launching App...';
     statusText.style.color = '#1877f2';
     
-    // Also include originalUrl and title in protocol for auto-launch
+    // Also include originalUrl, title, and cookie in protocol for auto-launch
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const originalUrl = tab ? tab.url : '';
     const pageTitle = tab ? tab.title : 'Downloaded Video';
-    const protocolUrl = `video-downloader://${encodeURIComponent(url)}?originalUrl=${encodeURIComponent(originalUrl)}&title=${encodeURIComponent(pageTitle)}`;
+    const cookie = await getCookiesForUrl(url, originalUrl);
+    
+    const protocolUrl = `video-downloader://${encodeURIComponent(url)}?originalUrl=${encodeURIComponent(originalUrl)}&title=${encodeURIComponent(pageTitle)}&cookie=${encodeURIComponent(cookie)}`;
     
     location.href = protocolUrl;
     

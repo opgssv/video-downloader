@@ -1,8 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  analyzeUrl: (url: string, referer?: string) => ipcRenderer.invoke('analyze-url', url, referer),
-  downloadVideo: (downloadId: string, formatId: string, url: string, referer?: string, customTitle?: string) => ipcRenderer.invoke('download-video', downloadId, formatId, url, referer, customTitle),
+  analyzeUrl: (url: string, referer?: string, cookie?: string) => ipcRenderer.invoke('analyze-url', url, referer, cookie),
+  downloadVideo: (downloadId: string, formatId: string, url: string, referer?: string, customTitle?: string, cookie?: string) => ipcRenderer.invoke('download-video', downloadId, formatId, url, referer, customTitle, cookie),
   cancelDownload: (downloadId: string) => ipcRenderer.invoke('cancel-download', downloadId),
   getDownloadPath: () => ipcRenderer.invoke('get-download-path'),
   getConfig: () => ipcRenderer.invoke('get-config'),
@@ -17,8 +17,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('download-progress', listener);
     return () => ipcRenderer.removeListener('download-progress', listener);
   },
-  onFromExtension: (callback: (url: string, originalUrl?: string, title?: string) => void) => {
-    const listener = (_event: any, url: string, originalUrl?: string, title?: string) => callback(url, originalUrl, title);
+  onFromExtension: (callback: (url: string, originalUrl?: string, title?: string, cookie?: string) => void) => {
+    const listener = (_event: any, url: string, originalUrl?: string, title?: string, cookie?: string) => callback(url, originalUrl, title, cookie);
     ipcRenderer.on('from-extension', listener);
     return () => ipcRenderer.removeListener('from-extension', listener);
   },
