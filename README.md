@@ -19,45 +19,53 @@
 ## 🛠️ 설치 및 설정
 
 ### 1. 데스크톱 앱 실행
-1.  `VideoDownloader_Setup.exe`를 실행하여 앱을 설치합니다.
-2.  앱 실행 후 **[Change]** 버튼을 눌러 영상이 저장될 폴더를 지정하세요.
+1. `VideoDownloader_Setup.exe`를 실행하여 앱을 설치합니다.
+2. 앱 실행 후 **[Change]** 버튼을 눌러 영상이 저장될 폴더를 지정하세요.
 
 ### 2. 브라우저 확장 프로그램 (Edge)
-1.  Edge 브라우저에서 `edge://extensions` 주소로 이동합니다.
-2.  왼쪽 하단의 **[개발자 모드]**를 활성화합니다.
-3.  **[압축 해제된 확장 로드]** 버튼을 누르고 프로젝트의 `edge-extension` 폴더를 선택합니다.
+개발자 경고 팝업이 뜨지 않도록 브라우저 정책(Registry)을 이용해 패키지 형태로 강제 자동 로드하는 방식입니다.
 
-#### 💡 Edge 확장 권한 자동 등록 (필수)
-브라우저 정책에 의해 확장이 매번 비활성화되는 것을 방지하려면 다음 중 하나를 수행하세요:
--   **배치 파일 (권장)**: `setup_edge_extension.bat` 파일을 실행합니다. (자동으로 관리자 권한을 요청합니다.)
--   **PowerShell**: `setup_edge_extension.ps1` 파일을 **관리자 권한**으로 실행합니다.
--   **Registry**: `setup_edge_extension.reg` 파일을 실행하여 레지스트리에 병합합니다.
+#### 💡 Edge 확장 자동 등록 및 경고 차단 방법 (필수)
+1. Edge 브라우저를 완전히 종료합니다.
+2. [setup_edge_extension.bat](file:///D:/gemini/video-downloader-app/setup_edge_extension.bat) 파일을 **더블클릭**하여 실행합니다. (관리자 권한 UAC 창이 뜨면 승인해 줍니다.)
+3. Edge 브라우저를 실행하면 **Video App Linker**가 수동 추가 작업 없이 자동으로 활성화됩니다.
+   * *주: 이 강제 설치(`Forcelist`) 방식은 보안상 사용자가 브라우저 UI에서 수동으로 On/Off할 수 없으며 상시 ON으로 유지됩니다.*
 
 ---
 
 ## 📖 사용 방법
 
-1.  **동영상 페이지 접속**: Edge 브라우저에서 원하는 동영상을 재생합니다.
-2.  **확장 프로그램 클릭**: 브라우저 우측 상단의 [Video App Linker] 아이콘을 클릭합니다.
-3.  **링크 전송**: 탐지된 URL 목록 중 원하는 항목을 클릭하여 앱으로 전송합니다.
-4.  **파일명 수정 (선택)**: 앱의 **[File Name]** 입력 칸에서 원하는 저장 파일명을 입력합니다.
-5.  **포맷 선택 및 다운로드**: 원하는 화질(Format)의 **[Download]** 버튼을 클릭합니다.
-6.  **자동화 옵션**:
-    -   목록을 깔끔하게 유지하려면 `Auto-remove completed items`를 체크하세요.
-    -   야간 다운로드 시 `Auto-quit when all downloads finish`를 체크하면 완료 후 프로그램이 종료됩니다.
+1. **동영상 페이지 접속**: Edge 브라우저에서 원하는 동영상을 재생합니다.
+2. **확장 프로그램 클릭**: 브라우저 우측 상단의 [Video App Linker] 아이콘을 클릭합니다.
+3. **링크 전송**: 탐지된 URL 목록 중 원하는 항목을 클릭하여 앱으로 전송합니다.
+4. **파일명 수정 (선택)**: 앱의 **[File Name]** 입력 칸에서 원하는 저장 파일명을 입력합니다.
+5. **포맷 선택 및 다운로드**: 원하는 화질(Format)의 **[Download]** 버튼을 클릭합니다.
+6. **자동화 옵션**:
+    - 목록을 깔끔하게 유지하려면 `Auto-remove completed items`를 체크하세요.
+    - 야간 다운로드 시 `Auto-quit when all downloads finish`를 체크하면 완료 후 프로그램이 종료됩니다.
 
 ---
 
 ## ⚠️ 문제 해결 (Troubleshooting)
 
--   **"Waiting"에서 멈추는 경우**: 
-    -   사이트의 링크가 일회성일 수 있습니다. 브라우저에서 영상을 다시 재생한 후 확장에서 새 링크를 클릭해 보세요.
-    -   방화벽이나 백신이 `yt-dlp.exe` 실행을 차단하고 있는지 확인하세요.
--   **취소 버튼**: 다운로드 중 문제가 생기면 언제든 **[Cancel]**을 눌러 안전하게 중단할 수 있습니다.
--   **파일명 깨짐**: 파일명에 특수문자(`\ / : * ? " < > |`)가 포함되면 자동으로 `_`로 치환되어 저장됩니다.
+### Q1. Edge에서 "알 수 없는 정책입니다" 오류가 나거나 확장이 로드되지 않나요?
+* **원인**: 윈도우 레지스트리는 키를 삭제하고 재생성해도 이전에 생성되었던 대소문자 이름 포맷을 기억(Case-preserving cache)하는 버그가 있습니다. 이 때문에 올바른 소문자 `ExtensionInstallForcelist`가 아닌 대문자 `ExtensionInstallForceList`로 남아있을 수 있습니다.
+* **해결 방법 (5초 조치)**:
+  1. `Win + R`을 누르고 `regedit`을 입력해 레지스트리 편집기를 실행합니다.
+  2. `컴퓨터\HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge` 경로로 이동합니다.
+  3. 좌측 폴더 트리에서 **`ExtensionInstallForceList`**를 마우스 우클릭 -> **[이름 바꾸기]**를 클릭하여 마지막 `List`를 소문자 `list`로 바꾼 **`ExtensionInstallForcelist`**로 변경해 줍니다.
+  4. `edge://policy` 페이지로 이동하여 **[정책 다시 로드]**를 클릭하면 차단이 풀립니다.
+
+### Q2. 확장을 사용자가 필요에 따라 수동으로 On/Off 하거나 제거하고 싶어요.
+* **Force 설치 방식의 한계**: 현재 자동 등록 방식(`Forcelist` 정책)은 경고창 팝업이 뜨지 않는 강력한 장점이 있으나, 브라우저 규정상 ON 상태가 강제되어 사용자가 수동으로 끌 수 없습니다.
+* **수동 On/Off 전환 방법**:
+  1. `Win + R` -> `regedit`을 실행하여 `컴퓨터\HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge` 경로로 이동합니다.
+  2. `ExtensionInstallForcelist` 폴더(키)를 마우스 우클릭하여 **삭제**합니다.
+  3. `edge://extensions` 설정 페이지로 이동하여 **[개발자 모드]**를 활성화합니다.
+  4. **[압축 해제된 확장 로드]** 버튼을 누르고 프로젝트의 `edge-extension` 폴더를 직접 선택하여 로드합니다. (이 방식으로 등록하면 사용자가 자유롭게 On/Off 할 수 있습니다. 단, 브라우저가 실행될 때마다 "개발자 모드 확장 사용 해제" 팝업 경고가 매번 뜨게 됩니다.)
 
 ---
 
 ## 💻 개발자 및 배포 정보
--   **Build**: `create_release.bat` 배치 파일을 실행하여 빌드부터 압축까지 한 번에 완료할 수 있습니다.
--   **Dependencies**: `bin/` 폴더 내에 `yt-dlp.exe`와 `ffmpeg.exe`가 반드시 포함되어야 합니다.
+- **Build**: `create_release.bat` 배치 파일을 실행하여 빌드부터 압축까지 한 번에 완료할 수 있습니다.
+- **Dependencies**: `bin/` 폴더 내에 `yt-dlp.exe`와 `ffmpeg.exe`가 반드시 포함되어야 합니다.

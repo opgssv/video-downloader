@@ -1,7 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Video App Linker",
-  "version": "1.0",
+  "version": "1.0.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA1ShJjYQkmw6/0sjNGsEynzKDkVENg/fG0o1a6MMHsNYy9huOCTJCuJjqtoWPn3a4hGguqD1zXrYB9cwAXXkHRLMpLtevbj//59v4AaI8TIvRZX2qbm/sICzLekbw3+JSiBWKU2c7S5oNHvEVEih0c5v7kV4do53RGFh2Mn/Jx0+wazR1kFHQ7YWB0i6wao2USKk93Q4BsrWiF/OWVh/sm8IA+ZAUe1t/AWQItTKZbUO4CfurlkozQhR/IQOvZfvdAnANrQeQWyIZSpri71qZLlxsGV8JaMf/p+m0q8wT0aax4ojZTnT1rkXW/nU6oxio9Nn8JhOiwi9LOn8Cz154nQIDAQAB",
   "description": "Send video URLs to Video Downloader App",
   "permissions": ["declarativeNetRequest", "webRequest", "tabs", "activeTab", "storage", "cookies"],
   "host_permissions": [
