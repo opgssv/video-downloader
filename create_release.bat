@@ -42,7 +42,6 @@ if exist "%ZIP%" del /f /q "%ZIP%"
 
 mkdir "%DIST%"
 mkdir "%DIST%\Extension"
-mkdir "%DIST%\Scripts"
 
 set "SETUP_PATH=out\make\squirrel.windows\x64\video-downloader-app-1.0.0 Setup.exe"
 if exist "%SETUP_PATH%" (
@@ -56,9 +55,6 @@ if exist "extension_dist.zip" (
 ) else if exist "edge-extension" (
     xcopy "edge-extension\*" "%DIST%\Extension\" /e /i /y >nul
 )
-
-copy "setup_edge_extension.bat" "%DIST%\Scripts\" >nul
-copy "setup_edge_extension.reg" "%DIST%\Scripts\" >nul
 copy "README.md" "%DIST%\README.md" >nul
 
 echo Creating ZIP archive...

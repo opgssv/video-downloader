@@ -27,8 +27,11 @@
       display: inline-block; padding: 2px 4px; border-radius: 3px; 
       font-weight: bold; margin-right: 5px; color: white; 
     }
-    .type-m3u8 { background: #e67e22; }
-    .type-mp4 { background: #27ae60; }
+    .type-hls { background: #e67e22; }
+    .type-dash { background: #8e44ad; }
+    .type-video, .type-media { background: #27ae60; }
+    .type-audio { background: #2980b9; }
+    .type-stream { background: #16a085; }
     
     .empty-msg { padding: 20px; text-align: center; color: #999; font-style: italic; font-size: 12px; }
     .section-title { font-size: 12px; font-weight: bold; margin: 10px 0 5px 0; color: #555; }
@@ -45,7 +48,7 @@
     <b>Tip:</b> For <b>YouTube/Twitter</b>, click the button above. For <b>Blocked Sites</b>, click one of the <b>Detected URLs</b> below.
   </div>
 
-  <div class="section-title">Detected Video URLs (m3u8 / mp4)</div>
+  <div class="section-title">Detected media streams</div>
   <div class="url-list-container" id="urlList">
     <div class="empty-msg">No videos detected yet. Refresh page or play video.</div>
   </div>

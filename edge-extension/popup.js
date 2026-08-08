@@ -105,13 +105,15 @@ async function loadCapturedUrls() {
       document.getElementById('blockedTip').style.display = 'block';
       urlListContainer.innerHTML = '';
       // REVERSE the array so the newest link is at the top
-      [...urls].reverse().forEach(url => {
+      [...urls].reverse().forEach(entry => {
+        // Supports URLs saved by older extension versions as well as new metadata records.
+        const detected = typeof entry === 'string' ? { url: entry, type: entry.toLowerCase().includes('.m3u8') ? 'HLS' : 'Video' } : entry;
+        const url = detected.url;
         const item = document.createElement('div');
         item.className = 'url-item';
-        
-        const isM3U8 = url.toLowerCase().includes('.m3u8');
-        const typeLabel = isM3U8 ? 'm3u8' : 'mp4';
-        const typeClass = isM3U8 ? 'type-m3u8' : 'type-mp4';
+
+        const typeLabel = detected.type || 'Media';
+        const typeClass = `type-${typeLabel.toLowerCase()}`;
         
         item.innerHTML = `<span class="url-item-type ${typeClass}">${typeLabel}</span>${url}`;
         // CRITICAL: Pass pageTitle here instead of a generic label

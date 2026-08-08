@@ -12,12 +12,9 @@
 *   **위치**: `video-downloader-app/`
 *   **설명**: Edge 브라우저에 "압축 해제된 확장 로드"로 설치할 확장 프로그램 패키지입니다.
 
-## 3. 권한 및 정책 설정 도구 (필수)
-*   **파일**: `setup_edge_extension.ps1` 또는 `setup_edge_extension.reg`
-*   **위치**: `video-downloader-app/`
-*   **설명**: Edge 브라우저 재시작 시 확장이 꺼지는 것을 방지하기 위해 확장 ID를 정책 허용 목록에 등록하는 스크립트입니다.
+> Edge 정책이나 CRX 패키지는 필요하지 않습니다. 사용자는 `edge://extensions`에서 개발자 모드를 켠 뒤 폴더를 직접 로드합니다.
 
-## 4. 핵심 엔진 (External Dependencies)
+## 3. 핵심 엔진 (External Dependencies)
 현재 코드상에서는 외부 경로를 참조하고 있으나, 배포 시에는 앱 폴더 내에 포함시키는 것이 좋습니다.
 *   **yt-dlp.exe**: 동영상 분석 및 다운로드 핵심 엔진.
 *   **ffmpeg.exe**: 다운로드된 영상 조각들을 하나로 합치는 병합 엔진.

@@ -12,19 +12,45 @@ if %errorLevel% neq 0 (
 
 pushd "%~dp0"
 
-REM 2. Convert backslashes to forward slashes for file URLs
-set "BASE_DIR=%~dp0"
-set "BASE_DIR_URL=!BASE_DIR:\=/!"
-set "DRIVE_LETTER=!BASE_DIR:~0,2!"
+REM 2. Support both the development layout and the release layout.
+REM    Development: <root>\edge-extension + <root>\edge-extension.crx
+REM    Release:     <root>\Extension + <root>\Scripts\setup_edge_extension.bat
+set "SCRIPT_DIR=%~dp0"
+set "EXT_DIR=%SCRIPT_DIR%edge-extension"
+set "CRX_PATH=%SCRIPT_DIR%edge-extension.crx"
+if not exist "%EXT_DIR%\manifest.json" (
+    set "EXT_DIR=%SCRIPT_DIR%..\Extension"
+    set "CRX_PATH=%EXT_DIR%\edge-extension.crx"
+)
 
-REM 3. Generate update.xml dynamically inside the edge-extension folder pointing to local crx path
-set "XML_PATH=edge-extension\update.xml"
+if not exist "%EXT_DIR%\manifest.json" (
+    echo [ERROR] Extension source folder was not found.
+    echo Expected: "%EXT_DIR%\manifest.json"
+    pause
+    exit /b 1
+)
+if not exist "%CRX_PATH%" (
+    echo [ERROR] Extension package was not found.
+    echo Expected: "%CRX_PATH%"
+    pause
+    exit /b 1
+)
+
+for /f "tokens=2 delims=:," %%A in ('findstr /r /c:"\"version\"[ ]*:" "%EXT_DIR%\manifest.json"') do set "VERSION=%%~A"
+set "VERSION=!VERSION:"=!"
+set "VERSION=!VERSION: =!"
+set "EXT_DIR_URL=!EXT_DIR:\=/!"
+set "CRX_URL=!CRX_PATH:\=/!"
+set "DRIVE_LETTER=!CRX_PATH:~0,2!"
+
+REM 3. Generate update.xml next to the extension source, pointing to the actual CRX.
+set "XML_PATH=%EXT_DIR%\update.xml"
 echo Creating update.xml...
 (
 echo ^<?xml version='1.0' encoding='utf-8'?^>
 echo ^<gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'^>
 echo   ^<app appid='klgmfkmpldegiplnkkgfhnakgelmolnm'^>
-echo     ^<updatecheck codebase='file:///!BASE_DIR_URL!edge-extension.crx' version='1.0.0' /^>
+echo     ^<updatecheck codebase='file:///!CRX_URL!' version='!VERSION!' /^>
 echo   ^</app^>
 echo ^</gupdate^>
 ) > "%XML_PATH%"
@@ -34,12 +60,12 @@ set "REGKEY_EDGE=HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge"
 set "REGKEY_FORCE=HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist"
 set "REGKEY_SOURCES=HKEY_LOCAL_MACHINE\SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallSources"
 set "EXTID=klgmfkmpldegiplnkkgfhnakgelmolnm"
-set "PROXY_URL=file:///!BASE_DIR_URL!edge-extension/update.xml"
+set "PROXY_URL=file:///!EXT_DIR_URL!/update.xml"
 set "REGDATA=!EXTID!;!PROXY_URL!"
 
-REM Clean the entire HKLM\...\Edge parent key to fully reset Windows registry's case-preserving cache
-echo Resetting Registry policy cache...
-reg delete "%REGKEY_EDGE%" /f >nul 2>&1
+REM Recreate only this extension's force-install list. Never remove unrelated Edge policies.
+echo Resetting this extension's force-install policy...
+reg delete "%REGKEY_FORCE%" /f >nul 2>&1
 
 echo Registering Extension to HKLM Forcelist policies...
 

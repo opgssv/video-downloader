@@ -476,7 +476,7 @@ async function handleSelectDownloadPath(event: IpcMainInvokeEvent) {
 async function handleAnalyzeUrl(event: IpcMainInvokeEvent, url: string, overrideReferer?: string) {
   // Clean URL: remove trailing slash if it's a file-like URL (.m3u8/ -> .m3u8)
   let targetUrl = url.trim();
-  if (targetUrl.toLowerCase().match(/\.(m3u8|mp4|mpd|m4v|ts)\/$/)) {
+  if (targetUrl.toLowerCase().match(/\.(m3u8|mp4|mpd|m4v|webm|mkv|mov|mp3|m4a|aac|ogg|opus)\/$/)) {
     targetUrl = targetUrl.slice(0, -1);
   }
 
@@ -498,7 +498,7 @@ async function handleAnalyzeUrl(event: IpcMainInvokeEvent, url: string, override
     const referer = overrideReferer || (origin + '/');
     
     // Check if it's a direct media link (skipping heavy analysis)
-    const isDirectMedia = urlToAnalyze.includes('.m3u8') || urlToAnalyze.includes('.mp4');
+    const isDirectMedia = /\.(m3u8|mpd|mp4|m4v|webm|mkv|mov|flv|avi|ogv|mp3|m4a|aac|ogg|opus|wav|flac)(?:$|[?#])/i.test(urlToAnalyze);
 
     const args = [
       '--dump-json',
@@ -583,7 +583,7 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
 
   // Clean URL
   let targetUrl = url.trim();
-  if (targetUrl.toLowerCase().match(/\.(m3u8|mp4|mpd|m4v|ts)\/$/)) {
+  if (targetUrl.toLowerCase().match(/\.(m3u8|mp4|mpd|m4v|webm|mkv|mov|mp3|m4a|aac|ogg|opus)\/$/)) {
     targetUrl = targetUrl.slice(0, -1);
   }
 
@@ -600,7 +600,7 @@ async function handleDownloadVideo(event: IpcMainInvokeEvent, downloadId: string
   console.log(`[API/download-video] ID: ${downloadId}, Target: ${targetUrl}, Format: ${formatId}, Referer: ${overrideReferer}`);
 
   // Determine output template and handle potential name collisions
-  const commonExts = ['mp4', 'mkv', 'webm', 'ts', 'mp3', 'm4a', 'm4v'];
+  const commonExts = ['mp4', 'mkv', 'webm', 'mov', 'm4v', 'avi', 'flv', 'ogv', 'ts', 'mp3', 'm4a', 'aac', 'ogg', 'opus', 'wav', 'flac'];
   let finalTitle = sanitizeFilename(customTitle || 'Downloaded Video');
   let counter = 1;
 
